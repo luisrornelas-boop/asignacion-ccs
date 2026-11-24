@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablero de Asignación</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#00a5df">
+<style>
+/* Layout idea: tablero semanal tipo cartelera de obra; filas = proyectos, columnas = días (vie a jue), fichas arrastrables. */
+:root{
+  --bg:#e7e6e1; --panel:#f6f5f1; --ink:#1c2630; --muted:#5b6670; --line:#cdcac2;
+  --accent:#f0b400; --accent-ink:#2a2100; --mach:#244f9e; --veh:#0e6a5a;
+  --bad:#c0392b; --ok:#2a8449; --warnbg:#fff1d6;
+  --display:'Barlow Condensed','Arial Narrow',sans-serif; --body:'Barlow','Segoe UI',system-ui,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#14191d; --panel:#1d242a; --ink:#e7ebee; --muted:#9aa6b0; --line:#344049;
+  --accent:#f0b400; --accent-ink:#2a2100; --mach:#6d9bf0; --veh:#4fc3ad; --bad:#ef7464; --ok:#5fc283; --warnbg:#3a3220; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#14191d; --panel:#1d242a; --ink:#e7ebee; --muted:#9aa6b0; --line:#344049;
+  --accent:#f0b400; --accent-ink:#2a2100; --mach:#6d9bf0; --veh:#4fc3ad; --bad:#ef7464; --ok:#5fc283; --warnbg:#3a3220; color-scheme:dark;}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:500 14px/1.35 var(--body);-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+#app{height:100%;display:flex;flex-direction:column;min-height:0}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:10px 16px;background:var(--panel);border-bottom:3px solid var(--accent)}
+.brand{display:flex;align-items:center;gap:10px;font:700 22px/1 var(--display);letter-spacing:.04em;text-transform:uppercase;margin-right:6px}
+.logo{height:42px;width:auto;background:#fff;border-radius:5px;padding:3px 6px;display:block}
+.chip .ord{font:700 11px/1 var(--body);background:rgba(0,0,0,.18);border-radius:999px;padding:2px 5px;margin-left:1px;cursor:pointer}
+.brand small{display:block;font:500 11px/1.2 var(--body);letter-spacing:.08em;color:var(--muted);margin-top:3px}
+.tabs{display:flex;gap:2px}
+.tab{border:0;background:transparent;padding:7px 12px;font:600 15px var(--display);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+.spacer{flex:1}
+.btn{border:1px solid var(--line);background:var(--bg);padding:6px 11px;border-radius:6px;cursor:pointer;font-weight:600}
+.btn:hover{border-color:var(--ink)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{color:var(--bad)}
+.btn:focus-visible,.tab:focus-visible,.chip:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:1px}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.weeknav{display:flex;align-items:center;gap:6px}
+.weektitle{font:700 20px/1 var(--display);letter-spacing:.03em;min-width:210px;text-align:center}
+.weektitle small{display:block;font:500 12px var(--body);color:var(--muted);letter-spacing:0;margin-top:2px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:var(--bg);font-weight:600;cursor:pointer}
+.pill.bad{border-color:var(--bad);color:var(--bad)}
+.pill.ok{color:var(--ok)}
+.banner{padding:8px 16px;background:var(--warnbg);border-bottom:1px solid var(--line);font-weight:500}
+main{flex:1;min-height:0;display:flex;flex-direction:column}
+.wrap{flex:1;min-height:0;overflow:auto;position:relative}
+.grid{display:grid;grid-template-columns:148px repeat(7,minmax(168px,1fr));min-width:1330px}
+.top{position:sticky;top:0;z-index:5;background:var(--bg)}
+.dock{position:sticky;bottom:0;z-index:6;background:var(--bg);box-shadow:0 -3px 0 var(--ink)}
+.dock.nofix{position:static}
+.dock .lab{padding:4px 10px}
+.dock .lab b{font-size:15px}
+.dock .cell{min-height:0;max-height:88px;overflow:auto;padding:4px;gap:3px}
+.dock .chip{font-size:12px;padding:2px 7px}
+.dock .chip.m,.dock .chip.v{font-size:13px;padding:1px 6px}
+.dock .chip.v{padding:0 5px}
+.cell,.lab,.dh{border-right:1px solid var(--line);border-bottom:1px solid var(--line);min-width:0}
+.lab{position:sticky;left:0;z-index:4;background:var(--panel);padding:8px 10px;display:flex;flex-direction:column;justify-content:center;gap:2px;border-left:6px solid var(--accent)}
+.lab b{font:700 17px/1.05 var(--display);letter-spacing:.03em;text-transform:uppercase}
+.lab span{font-size:11.5px;color:var(--muted)}
+.lab .x{align-self:flex-start;border:0;background:none;color:var(--muted);cursor:pointer;padding:0;font-size:12px;text-decoration:underline}
+.lab.free{border-left-color:var(--ink)}
+.lab.mach{border-left-color:var(--mach)}
+.lab.veh{border-left-color:var(--veh)}
+.lab.sp{border-left-color:var(--muted)}
+.dh{padding:8px 10px;background:var(--panel);display:flex;flex-direction:column;gap:3px;border-top:4px solid transparent}
+.dh.today{border-top-color:var(--accent)}
+.dh .n{font:700 19px/1 var(--display);letter-spacing:.04em;text-transform:uppercase}
+.dh .m{font-size:12px;color:var(--muted)}
+.dh .c{font-size:12px;display:flex;justify-content:space-between;gap:6px;align-items:center}
+.dh .c button{border:0;background:none;padding:0;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:12px}
+.cell{padding:6px;display:flex;flex-wrap:wrap;align-content:flex-start;gap:5px;min-height:54px;position:relative;background:var(--bg)}
+.cell.freec{background:repeating-linear-gradient(135deg,transparent 0 9px,rgba(127,127,127,.07) 9px 18px)}
+.cell.spc{background:repeating-linear-gradient(135deg,rgba(127,127,127,.10) 0 6px,transparent 6px 12px)}
+.cell.over{outline:3px dashed var(--accent);outline-offset:-3px;background:var(--warnbg)}
+.cell.inf::after{content:"proyecto deducido";position:absolute;right:4px;bottom:2px;font-size:10px;color:var(--muted);font-style:italic}
+.cell .cp{position:absolute;right:3px;top:3px;border:1px solid var(--line);background:var(--panel);border-radius:4px;font-size:11px;line-height:1;padding:3px 5px;cursor:pointer;opacity:0;color:var(--muted)}
+.cell:hover .cp,.cell .cp:focus-visible{opacity:1}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:999px;font:600 13px/1.1 var(--body);cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;white-space:nowrap;max-width:100%}
+.chip.p{background:hsl(var(--h) 60% 85%);color:hsl(var(--h) 55% 16%);border:1px solid hsl(var(--h) 40% 58%)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .chip.p{background:hsl(var(--h) 38% 27%);color:hsl(var(--h) 70% 92%);border-color:hsl(var(--h) 35% 45%)}}
+:root[data-theme="dark"] .chip.p{background:hsl(var(--h) 38% 27%);color:hsl(var(--h) 70% 92%);border-color:hsl(var(--h) 35% 45%)}
+.chip.p.alm::before{content:"";width:7px;height:7px;background:currentColor;opacity:.6;border-radius:1px}
+.chip.m{border-radius:3px;background:var(--mach);color:#fff;font-family:var(--display);font-weight:600;font-size:14px;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px}
+:root[data-theme="dark"] .chip.m,:root:not([data-theme="light"]) .chip.m{color:#0b1220}
+.chip.v{border-radius:3px;background:transparent;color:var(--veh);border:2px solid var(--veh);font-family:var(--display);font-weight:600;font-size:14px;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px}
+.chip.dis{opacity:.45;cursor:not-allowed}
+.chip .flag{width:8px;height:8px;border-radius:50%;background:var(--bad);flex:none}
+.chip.dragging{opacity:.3}
+.ghost{position:fixed;z-index:99;pointer-events:none;box-shadow:0 6px 18px rgba(0,0,0,.35);transform:rotate(-2deg)}
+.empty{color:var(--muted);font-size:12px;font-style:italic;padding:4px 2px}
+.hint{padding:6px 16px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);background:var(--panel)}
+.addrow{display:flex;gap:8px;align-items:center;padding:10px 16px;flex-wrap:wrap}
+select,input[type=text],input[type=date],input[type=number]{border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:6px 8px;min-width:0}
+.page{padding:16px;overflow:auto;flex:1;min-height:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:16px}
+.card h2{margin:0 0 4px;font:700 20px var(--display);letter-spacing:.04em;text-transform:uppercase}
+.card p{margin:2px 0 10px;color:var(--muted)}
+table{border-collapse:collapse}
+.mx{overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+.mx th,.mx td{border:1px solid var(--line);padding:5px 8px;text-align:center;white-space:nowrap}
+.mx th:first-child,.mx td:first-child{text-align:left;position:sticky;left:0;background:var(--panel);z-index:1}
+.mx thead th{background:var(--panel);font:700 14px var(--display);letter-spacing:.04em;text-transform:uppercase}
+.mx th label{display:block;font:500 11px var(--body);text-transform:none;letter-spacing:0;color:var(--muted)}
+.cs{min-width:54px;border:1px solid var(--line);background:var(--panel);border-radius:5px;padding:3px 6px;cursor:pointer;font-weight:700}
+.cs.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+.cs.no{background:var(--bad);border-color:var(--bad);color:#fff}
+.cs.unk{color:var(--muted);font-weight:500}
+.cs small{display:block;font-weight:500;font-size:10px}
+.help{max-width:860px}
+.help h3{margin:14px 0 4px;font:700 17px var(--display);letter-spacing:.04em;text-transform:uppercase}
+.help p,.help li{margin:3px 0;line-height:1.5}
+.help ul{margin:4px 0;padding-left:20px}
+.help kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;font:600 12px var(--body);background:var(--bg)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.rowf{display:flex;gap:8px;align-items:center;margin:6px 0;flex-wrap:wrap}
+.rowf input[type=text]{flex:1;min-width:120px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;background:var(--bg);padding:6px 12px;cursor:pointer;font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;z-index:120;max-width:90vw;box-shadow:0 6px 20px rgba(0,0,0,.3)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:110;padding:16px}
+.modal>div{background:var(--panel);border-radius:10px;padding:18px;max-width:440px;width:100%}
+.modal h3{margin:0 0 6px;font:700 20px var(--display);text-transform:uppercase;letter-spacing:.04em}
+.alerts{padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.alerts li{margin:2px 0}
+.center{max-width:560px;margin:60px auto;padding:0 16px;text-align:center}
+.center h1{font:700 30px var(--display);text-transform:uppercase;letter-spacing:.04em;margin:0 0 8px}
+progress{width:100%;height:14px;accent-color:var(--accent)}
+.pill.warn{border-color:var(--accent);background:var(--warnbg)}
+.tabs{overflow-x:auto;max-width:100%}
+.tab{white-space:nowrap}
+.chip.st{cursor:default;touch-action:auto}
+.vig{width:58px}
+.fg{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:8px 0}
+.fg label{display:flex;flex-direction:column;gap:2px;font:600 12px var(--body);color:var(--muted)}
+.fg input{width:100%;color:var(--ink)}
+.pcard{border-left:6px solid var(--accent)}
+.pcard.prog{border-left-color:var(--mach)}
+.pcard.done{border-left-color:var(--ok);opacity:.8}
+.ptitle{font:700 20px var(--display);letter-spacing:.04em;text-transform:uppercase}
+.pbadge{font:600 12px var(--body);padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--bg)}
+.st-exp,.st-d15{color:var(--bad);font-weight:700}
+.st-m1{background:var(--warnbg);font-weight:700}
+.sc.w{font-weight:700}
+.sc.rest{color:var(--muted)}
+.sc.fal{color:var(--bad);font-weight:700}
+.sc.alm,.sc.cur{font-style:italic}
+details summary{cursor:pointer;margin:6px 0}
+.dayv{padding:10px}
+.dtabs{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:10px}
+.dtab{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:6px 0;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;font-family:var(--body);color:var(--ink)}
+.dtab b{font:700 13px var(--display);letter-spacing:.04em}
+.dtab span{font:700 17px var(--display)}
+.dtab small{color:var(--muted);font-size:11px}
+.dtab.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.dtab.on small{color:var(--bg)}
+.dtab.today:not(.on){border-color:var(--accent);box-shadow:inset 0 -3px 0 var(--accent)}
+.dh2{font:700 22px var(--display);letter-spacing:.04em;text-transform:uppercase;margin:4px 0 10px}
+.dcard{background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--accent);border-radius:8px;padding:10px;margin-bottom:10px}
+.dcard.sp{border-left-color:var(--muted)}
+.dcard.free{border-left-color:var(--ink)}
+.dcard .dt{display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:6px}
+.dcard .dt b{font:700 19px var(--display);letter-spacing:.03em;text-transform:uppercase}
+.dcard .dt span{font-size:12px;color:var(--muted)}
+.dchips{display:flex;flex-wrap:wrap;gap:6px}
+@media (max-width:720px){
+  .bar{padding:8px 10px;gap:8px}
+  .brand{font-size:18px}
+  .logo{height:32px}
+  .tabs{flex-basis:100%;order:5}
+  .tab{padding:6px 9px;font-size:14px}
+  .spacer{display:none}
+  .weektitle{min-width:140px;font-size:17px}
+  .page{padding:10px}
+  .card{padding:10px}
+  .btn{padding:6px 9px}
+  .hint{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app"><div class="center"><h1>Cargando tablero</h1><p>Conectando con los datos compartidos…</p></div></div>
+<script>
+const SEED={days:{},weeks:{},cfg:{}};
+let LOGO=null, deferred=false;
+const DOW = ['DOM','LUN','MAR','MIÉ','JUE','VIE','SÁB'];
+const MONTHS = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const SPECIAL = [['rest','Descansos','Sin trabajo ese día'],['alm','Almacén','Cuidan el almacén'],['cur','Curso','Capacitación'],['fal','Falta','Faltas e incapacidades']];
+let db=null, canWrite=true, cfg=null, cfgState='loading';
+const daysDocs=new Map(), weeksDocs=new Map(), pendDocs=new Map();
+let boardView=(window.innerWidth<720?'day':'week'), dayIdx=null, pfilter='pend';
+let tab='board', weekStart=null, pinned=true, showInactive=false, showAllClients=false, showAlerts=false, dragging=null, pendingRender=false;
+const app=document.getElementById('app');
+
+/* ---------- utilidades ---------- */
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pdate=iso=>{const[a,b,c]=iso.split('-').map(Number);return new Date(a,b-1,c,12)};
+const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const addDays=(s,n)=>{const d=pdate(s);d.setDate(d.getDate()+n);return iso(d)};
+const slug=s=>s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+const clone=o=>JSON.parse(JSON.stringify(o));
+function firstFriday(y){const d=new Date(y,0,1,12);while(d.getDay()!==5)d.setDate(d.getDate()+1);return iso(d)}
+function weekNo(start){const ww=weeksDocs.get(start);if(ww&&ww.n)return ww.n;const y=pdate(start).getFullYear();const f=firstFriday(y);return Math.round((pdate(start)-pdate(f))/604800000)+1}
+function weekStartOf(date){const d=pdate(date);const back=(d.getDay()-5+7)%7;d.setDate(d.getDate()-back);return iso(d)}
+const weekDays=s=>[0,1,2,3,4,5,6].map(i=>addDays(s,i));
+function rangeText(s){const a=pdate(s),b=pdate(addDays(s,6));return a.getMonth()===b.getMonth()?`${a.getDate()} al ${b.getDate()} de ${MONTHS[b.getMonth()]} de ${b.getFullYear()}`:`${a.getDate()} de ${MONTHS[a.getMonth()]} al ${b.getDate()} de ${MONTHS[b.getMonth()]} de ${b.getFullYear()}`}
+function toast(msg){document.querySelectorAll('.toast').forEach(t=>t.remove());const t=document.createElement('div');t.className='toast';t.setAttribute('role','status');t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),4200)}
+function confirmBox(title,text,okText){return new Promise(res=>{const m=document.createElement('div');m.className='modal';m.innerHTML=`<div role="dialog" aria-modal="true"><h3>${esc(title)}</h3><p>${esc(text)}</p><div class="rowf" style="justify-content:flex-end"><button class="btn" id="cn">Cancelar</button><button class="btn primary" id="ok">${esc(okText||'Aceptar')}</button></div></div>`;document.body.appendChild(m);m.querySelector('#ok').focus();const done=v=>{m.remove();res(v)};m.querySelector('#ok').onclick=()=>done(true);m.querySelector('#cn').onclick=()=>done(false);m.onclick=e=>{if(e.target===m)done(false)}})}
+
+/* ---------- datos ---------- */
+const person=id=>cfg.people.find(p=>p.id===id);
+const project=id=>cfg.projects.find(p=>p.id===id);
+const clientOf=id=>{const p=project(id);return p?cfg.clients.find(c=>c.id===p.c):null};
+function courseStatus(pid,cid){const c=cfg.clients.find(x=>x.id===cid);if(!c||!c.q)return 'na';const r=(cfg.courses[cid]||{})[pid];return r?(r.ok?'ok':'no'):'unk'}
+function emptyDay(d){return{d,cells:{},rest:[],alm:[],cur:[],fal:[],inf:[],ord:{}}}
+function normDay(o){const al=(cfg&&cfg.alias)||{};const fix=l=>{const r=[];(l||[]).forEach(id=>{id=al[id]||id;if(!r.includes(id))r.push(id)});return r};Object.values(o.cells).forEach(c=>{c.p=fix(c.p)});['rest','alm','cur','fal'].forEach(k=>o[k]=fix(o[k]));return o}
+function dayOf(d){const x=daysDocs.get(d);return normDay(x?clone(Object.assign(emptyDay(d),x)):emptyDay(d))}
+function migrate2(n){n.v=2}
+function rowsOf(s){const w=weeksDocs.get(s);const seen=w&&w.rows?w.rows.slice():[];weekDays(s).forEach(d=>Object.keys(dayOf(d).cells).forEach(p=>{if(!seen.includes(p))seen.push(p)}));return seen}
+function listOf(day,cont,kind){if(cont.startsWith('c:')){const k=cont.slice(2);const c=day.cells[k]||(day.cells[k]={p:[],m:[],v:[]});return c[kind]||(c[kind]=[])}return day[cont]}
+function removeEverywhere(day,kind,id){if(kind==='p'&&day.ord)delete day.ord[id];Object.values(day.cells).forEach(c=>{if(c[kind])c[kind]=c[kind].filter(x=>x!==id)});if(kind==='p')['rest','alm','cur','fal'].forEach(k=>day[k]=day[k].filter(x=>x!==id))}
+function cleanDay(day){Object.keys(day.cells).forEach(k=>{const c=day.cells[k];if(!(c.p&&c.p.length)&&!(c.m&&c.m.length)&&!(c.v&&c.v.length))delete day.cells[k]});day.inf=(day.inf||[]).filter(k=>day.cells[k]);
+  const o={};Object.entries(day.ord||{}).forEach(([id,arr])=>{const cs=cellsOf(day,id);const a=arr.filter(k=>cs.includes(k));if(cs.length>1)o[id]=a});day.ord=o;return day}
+function cellsOf(day,id){return Object.keys(day.cells).filter(k=>(day.cells[k].p||[]).includes(id))}
+function orderOf(day,id){const cs=cellsOf(day,id);const o=((day.ord||{})[id]||[]).filter(k=>cs.includes(k));cs.forEach(k=>{if(!o.includes(k))o.push(k)});return o}
+function ordNum(day,id,pid){const o=orderOf(day,id);return o.length>1?o.indexOf(pid)+1:0}
+const CIRC=['','①','②','③','④','⑤'];
+function placed(day,kind,id){return Object.values(day.cells).some(c=>(c[kind]||[]).includes(id))||(kind==='p'&&['rest','alm','cur','fal'].some(k=>day[k].includes(id)))}
+function place(day,date,kind,id,cont,opt){opt=opt||{};
+  if(cont==='free'){removeEverywhere(day,kind,id);return{ok:true}}
+  if(kind!=='p'&&!cont.startsWith('c:'))return{ok:false,msg:'Las máquinas y camionetas solo van dentro de un proyecto.'};
+  if(kind==='m'){const m=cfg.machines.find(x=>x.id===id);if(m&&m.from&&date<m.from)return{ok:false,msg:`${m.n} llega el ${pdate(m.from).getDate()} de ${MONTHS[pdate(m.from).getMonth()]}.`}}
+  if(kind==='p'&&cont.startsWith('c:')){const pr=project(cont.slice(2));if(pr&&courseStatus(id,pr.c)==='no'&&cfg.mode==='block'){return{ok:false,msg:`${person(id).n} no tiene el curso de ${pr.c.toUpperCase()}. Quita el bloqueo en Cursos si quieres permitirlo.`}}}
+  if(kind==='p'&&cont.startsWith('c:')&&(opt.extra||(opt.from&&opt.from.startsWith('c:')))){
+    const k=cont.slice(2);let o=orderOf(day,id);
+    ['rest','alm','cur','fal'].forEach(s=>day[s]=day[s].filter(x=>x!==id));
+    if(opt.from&&!opt.extra){const fk=opt.from.slice(2);const fl=listOf(day,opt.from,'p');const i=fl.indexOf(id);if(i>=0)fl.splice(i,1);o=o.map(x=>x===fk?k:x)}
+    const l=listOf(day,cont,'p');if(!l.includes(id))l.push(id);
+    if(!o.includes(k))o.push(k);o=o.filter((x,i)=>o.indexOf(x)===i);day.ord=day.ord||{};day.ord[id]=o;
+  } else {removeEverywhere(day,kind,id);listOf(day,cont,kind).push(id)}
+  if(cont.startsWith('c:'))day.inf=(day.inf||[]).filter(k=>k!==cont.slice(2));
+  return{ok:true}}
+
+/* ---------- Supabase: capa que imita lo que daba Claude (db, user, downloads) ---------- */
+const SB=supabase.createClient('https://xtwplmiaexatuwgzrdde.supabase.co','sb_publishable_DUeRlOh0KJzjGZfVoS1Naw_dpJXP-z7');
+let SB_EMAIL='';
+function sbErr(e){return {code:(e&&(e.code==='42501'||/row-level|permission/i.test(e.message||'')))?'invalid_argument':'error',message:e&&e.message}}
+function sbDb(){
+  const rows=async t=>{const r=await SB.from(t).select('id,data');if(r.error)throw r.error;return r.data};
+  const listen=(t,onChange)=>{SB.channel('rt-'+t+Math.random()).on('postgres_changes',{event:'*',schema:'public',table:t},onChange).subscribe()};
+  return {
+    doc(path){const [t,id]=path.split('/');return{
+      async set(obj){const r=await SB.from(t).upsert({id,data:obj,updated_by:SB_EMAIL,updated_at:new Date().toISOString()});if(r.error)throw sbErr(r.error)},
+      async delete(){const r=await SB.from(t).delete().eq('id',id);if(r.error)throw sbErr(r.error)},
+      onSnapshot(cb,err){const go=async()=>{try{const r=await SB.from(t).select('data').eq('id',id).maybeSingle();if(r.error)throw r.error;cb({exists:!!r.data,data:()=>r.data&&r.data.data,metadata:{hasPendingWrites:false}})}catch(e){err&&err(e)}};go();listen(t,go)}}},
+    collection(t){return{onSnapshot(cb,err){const go=async()=>{try{const d=await rows(t);cb({docs:d.map(x=>({id:x.id,data:()=>x.data}))})}catch(e){err&&err(e)}};go();listen(t,go)}}}}}
+window.claude={async use(n){
+  if(n==='db')return sbDb();
+  if(n==='user'){let ed=false;try{const r=await SB.from('editores').select('email');ed=!!(r.data||[]).some(x=>x.email.toLowerCase()===SB_EMAIL.toLowerCase())}catch(e){}return{can:()=>ed}}
+  if(n==='downloads')return{async save({filename,data}){const a=document.createElement('a');a.href=URL.createObjectURL(data);a.download=filename;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500)}};
+  throw new Error('no disponible')}};
+function loginView(msg){
+  document.getElementById('app').innerHTML=`<div class="center"><h1>Tablero de asignación</h1><p>Escribe tu correo y te mando un enlace para entrar.</p>
+  <form id="lf" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:12px"><input id="le" type="email" required placeholder="tu@correo.com" style="padding:10px 12px;font-size:16px;min-width:240px"><button class="btn primary" type="submit">Enviar enlace</button></form><p id="lm" style="margin-top:12px">${msg||''}</p></div>`;
+  document.getElementById('lf').onsubmit=async ev=>{ev.preventDefault();const em=document.getElementById('le').value.trim();const lm=document.getElementById('lm');lm.textContent='Enviando…';
+    const r=await SB.auth.signInWithOtp({email:em,options:{emailRedirectTo:location.origin+location.pathname}});
+    lm.textContent=r.error?(/rate limit/i.test(r.error.message||'')?'Se mandaron demasiados enlaces en la última hora. Espera un rato y vuelve a intentar.':'No se pudo enviar: '+r.error.message):'Listo. Revisa tu correo y abre el enlace (puede tardar un minuto; mira también en spam).'}}
+async function boot(){
+  const {data}=await SB.auth.getSession();
+  if(!data.session){loginView();return}
+  SB_EMAIL=data.session.user.email||'';
+  start()}
+SB.auth.onAuthStateChange((ev)=>{if(ev==='SIGNED_OUT')loginView()});
+
+const chain=new Map();
+function queue(path,fn,undo){const prev=chain.get(path)||Promise.resolve();const next=prev.then(fn).catch(e=>{try{if(undo)undo()}catch(x){}if(e&&e.code==='invalid_argument'){canWrite=false;toast('Este cambio no se guardó: tu cuenta no tiene permiso de edición en este tablero. Pide al dueño que te invite por correo como Editor.')}else toast('No se pudo guardar el cambio. Revisa tu conexión e inténtalo otra vez.');console.error(e);render()});chain.set(path,next);return next}
+function saveDay(d,obj){obj.d=d;cleanDay(obj);const old=daysDocs.get(d);daysDocs.set(d,obj);if(db)queue('days/'+d,()=>db.doc('days/'+d).set(obj),()=>{if(old)daysDocs.set(d,old);else daysDocs.delete(d)})}
+function saveWeek(s,obj){weeksDocs.set(s,obj);if(db)queue('weeks/'+s,()=>db.doc('weeks/'+s).set(obj))}
+function saveCfg(fn){const n=clone(cfg);fn(n);cfg=n;if(db)queue('cfg/main',()=>db.doc('cfg/main').set(n));render()}
+
+/* ---------- acciones sobre el tablero ---------- */
+function move(m){
+  if(m.srcDay===m.dstDay&&m.srcCont===m.dstCont)return;
+  const same=m.srcDay===m.dstDay;const dst=dayOf(m.dstDay);const test=clone(dst);let r;
+  if(same&&m.kind==='p'&&m.dstCont.startsWith('c:')&&m.srcCont.startsWith('c:'))r=place(test,m.dstDay,'p',m.id,m.dstCont,m.copy?{extra:true}:{from:m.srcCont});
+  else if(same&&m.dstCont==='free'&&m.srcCont.startsWith('c:')){const l=listOf(test,m.srcCont,m.kind);const i=l.indexOf(m.id);if(i>=0)l.splice(i,1);r={ok:true}}
+  else r=place(test,m.dstDay,m.kind,m.id,m.dstCont);
+  if(!r.ok){toast(r.msg);return}
+  if(!same&&!m.copy&&m.srcCont!=='free'){const src=dayOf(m.srcDay);const l=listOf(src,m.srcCont,m.kind);const i=l.indexOf(m.id);if(i>=0)l.splice(i,1);if(m.srcCont.startsWith('c:'))src.inf=(src.inf||[]).filter(k=>k!==m.srcCont.slice(2));saveDay(m.srcDay,src)}
+  saveDay(m.dstDay,test);
+  if(m.kind==='p'&&m.dstCont.startsWith('c:')){const pr=project(m.dstCont.slice(2));if(pr&&courseStatus(m.id,pr.c)==='no')toast(`${person(m.id).n} no tiene registrado el curso de ${pr.c.toUpperCase()}.`)
+    else if(same&&m.copy&&cellsOf(test,m.id).length>1)toast(`${person(m.id).n} va a dos trabajos ese día. Toca el número para cambiar el orden.`)}
+  render()}
+function rotateOrd(d,id){const x=dayOf(d);const o=orderOf(x,id);if(o.length<2)return;o.unshift(o.pop());x.ord=x.ord||{};x.ord[id]=o;saveDay(d,x);render()}
+function copyInto(from,to){ // copia todo un día a otro, validando cada ficha
+  const a=dayOf(from);const b=emptyDay(to);const skipped=[];
+  Object.entries(a.cells).forEach(([k,c])=>['p','m','v'].forEach(kind=>(c[kind]||[]).forEach(id=>{const r=place(b,to,kind,id,'c:'+k,kind==='p'?{extra:true}:{});if(!r.ok)skipped.push(r.msg)})));
+  ['rest','alm','cur','fal'].forEach(k=>a[k].forEach(id=>place(b,to,'p',id,k)));
+  b.inf=(a.inf||[]).slice();b.ord=clone(a.ord||{});saveDay(to,b);return skipped}
+async function copyPrevWeek(){
+  const prev=addDays(weekStart,-7);const has=weekDays(weekStart).some(d=>{const x=dayOf(d);return Object.keys(x.cells).length||SPECIAL.some(s=>x[s[0]].length)});
+  if(!weeksDocs.get(prev)&&!weekDays(prev).some(d=>daysDocs.has(d))){toast('La semana anterior no tiene datos.');return}
+  if(has&&!await confirmBox('Reemplazar esta semana','Esta semana ya tiene fichas. Se reemplazarán con las de la semana anterior.','Reemplazar'))return;
+  let skipped=[];weekDays(prev).forEach((d,i)=>{skipped=skipped.concat(copyInto(d,addDays(weekStart,i)))});
+  saveWeek(weekStart,{rows:rowsOf(prev).slice(),n:weekNo(weekStart)});
+  render();toast(skipped.length?`Copiada. ${skipped.length} ficha(s) no se copiaron: ${skipped[0]}`:'Semana copiada. Ajusta lo que cambió.')}
+function seedAlmacen(){
+  const ppl=cfg.people.filter(p=>p.a&&p.r==='alm');if(!ppl.length){toast('Marca a alguien como "almacén" en Catálogo.');return}
+  weekDays(weekStart).forEach(d=>{const x=dayOf(d);ppl.forEach(p=>{place(x,d,'p',p.id,pdate(d).getDay()===0?'rest':'alm')});saveDay(d,x)});render()}
+function copyDayNext(i){const days=weekDays(weekStart);if(i>=6){toast('Es el último día de la semana.');return}const sk=copyInto(days[i],days[i+1]);render();toast(sk.length?`Copiado, con ${sk.length} aviso(s): ${sk[0]}`:'Día copiado al siguiente.')}
+function copyCellNext(d,pid){const days=weekDays(weekStart);const i=days.indexOf(d);if(i>=6){toast('Es el último día de la semana.');return}
+  const a=dayOf(d).cells[pid];if(!a)return;const b=dayOf(days[i+1]);const sk=[];
+  ['p','m','v'].forEach(k=>(a[k]||[]).forEach(id=>{const r=place(b,days[i+1],k,id,'c:'+pid);if(!r.ok)sk.push(r.msg)}));saveDay(days[i+1],b);render();toast(sk.length?sk[0]:'Copiado al día siguiente.')}
+async function removeRow(pid){
+  const pr=project(pid);if(!rowsOf(weekStart).includes(pid)){toast('Ese proyecto no está en esta semana.');return}
+  const days=weekDays(weekStart);const used=days.filter(d=>dayOf(d).cells[pid]);
+  if(used.length&&!await confirmBox('Quitar '+(pr?pr.n:'proyecto'),'Tiene fichas asignadas en '+used.length+' día(s) de esta semana. Al quitarlo, esas fichas regresan a Disponibles.','Quitar'))return;
+  used.forEach(d=>{const x=dayOf(d);delete x.cells[pid];saveDay(d,x)});
+  saveWeek(weekStart,{rows:rowsOf(weekStart).filter(x=>x!==pid),n:weekNo(weekStart)});render()}
+function weekAlerts(){
+  const out=[];weekDays(weekStart).forEach(d=>{const day=dayOf(d);Object.entries(day.cells).forEach(([k,c])=>{const pr=project(k);if(!pr)return;
+    (c.p||[]).forEach(id=>{if(courseStatus(id,pr.c)==='no')out.push({lvl:'bad',t:`${DOW[pdate(d).getDay()]} ${pdate(d).getDate()}: ${person(id).n} en ${pr.n} sin curso ${pr.c}`})});
+    if((day.inf||[]).includes(k))out.push({lvl:'warn',t:`${DOW[pdate(d).getDay()]} ${pdate(d).getDate()}: ${pr.n} se dedujo de días anteriores (el Excel no tenía el nombre)`})})});
+  return out}
+
+/* ---------- fechas y cursos por vencer ---------- */
+function addMonths(s,m){const d=pdate(s);d.setMonth(d.getMonth()+m);return iso(d)}
+function daysBetween(a,b){return Math.round((pdate(b)-pdate(a))/86400000)}
+function fmtD(s){const d=pdate(s);return d.getDate()+' '+MONTHS[d.getMonth()].slice(0,3)+' '+d.getFullYear()}
+function vigOf(c){return c.vig===0?0:(+c.vig||12)}
+function expiring(){
+  const today=iso(new Date());const out=[];
+  cfg.clients.forEach(c=>{if(!c.q)return;const vg=vigOf(c);if(!vg)return;const cr=cfg.courses[c.id]||{};
+    cfg.people.forEach(p=>{if(!p.a)return;const r=cr[p.id];if(!r||!r.ok||!/^\d{4}-\d{2}-\d{2}$/.test(r.f||''))return;
+      const ven=addMonths(r.f,vg),left=daysBetween(today,ven);
+      if(left<=30)out.push({p,c,f:r.f,ven,left,lvl:left<0?'exp':left<=15?'d15':'m1'})})});
+  return out.sort((a,b)=>a.left-b.left)}
+function expCard(){
+  const ex=expiring();const soon=ex.filter(x=>x.left>=0),old=ex.filter(x=>x.left<0);
+  const tr=x=>`<tr><td><span class="chip p st" style="--h:${x.p.h}">${esc(x.p.n)}</span></td><td>${esc(x.c.n)}</td><td>${fmtD(x.f)}</td><td>${fmtD(x.ven)}</td><td class="st-${x.lvl}">${x.left<0?`Venció hace ${-x.left} día${x.left===-1?'':'s'}`:x.left===0?'Vence hoy':`Vence en ${x.left} día${x.left===1?'':'s'}`}${x.lvl==='d15'?' · aviso de 15 días':x.lvl==='m1'?' · aviso de 1 mes':''}</td></tr>`;
+  const tbl=l=>`<div class="mx"><table><thead><tr><th>Persona</th><th>Cliente</th><th>Curso del</th><th>Vence</th><th>Estado</th></tr></thead><tbody>${l.map(tr).join('')}</tbody></table></div>`;
+  return `<div class="card"><h2>Cursos por vencer</h2><p>Avisa un mes antes y otra vez 15 días antes. La vigencia corre desde la fecha del curso y es de 12 meses salvo que la cambies por cliente en la tabla de abajo (0 = no vence). Solo cuenta personal activo, clientes que piden curso y celdas con fecha.</p>
+  ${soon.length?tbl(soon):'<p style="margin:4px 0"><b>Nada por vencer en los próximos 30 días.</b></p>'}
+  ${old.length?`<details style="margin-top:10px"><summary><b>Ya vencidos (${old.length})</b>: revisa si hay que renovar o corregir la fecha</summary>${tbl(old)}</details>`:''}</div>`}
+
+/* ---------- migración 4: camionetas nuevas ---------- */
+function migrate4(n){
+  n.vehicles.forEach(v=>{if(/^C\d$/i.test(v.n))v.x=1});
+  [['v_van1','VAN1'],['v_van2','VAN2'],['v_van3','VAN3'],['v_np300','NP300'],['v_nv200','NV200']].forEach(([id,nm])=>{if(!n.vehicles.some(v=>v.id===id))n.vehicles.push({id,n:nm})})}
+
+/* ---------- avisos, texto y render suave ---------- */
+function alertsBlock(alerts){return showAlerts?`<div class="alerts"><b>Revisión de la semana</b>${alerts.length?'<ul>'+alerts.map(a=>`<li style="color:${a.lvl==='bad'?'var(--bad)':'inherit'}">${esc(a.t)}</li>`).join('')+'</ul>':'<p style="margin:4px 0">Sin avisos.</p>'}</div>`:''}
+function showText(txt){const m=document.createElement('div');m.className='modal';m.innerHTML=`<div role="dialog" aria-modal="true"><h3>Copia este texto</h3><textarea readonly style="width:100%;height:240px;font:13px/1.4 var(--body)">${esc(txt)}</textarea><div class="rowf" style="justify-content:flex-end"><button class="btn primary" id="cl">Cerrar</button></div></div>`;document.body.appendChild(m);const t=m.querySelector('textarea');t.focus();t.select();m.querySelector('#cl').onclick=()=>m.remove();m.onclick=e=>{if(e.target===m)m.remove()}}
+async function copyText(txt){try{await navigator.clipboard.writeText(txt);toast('Copiado. Pégalo en WhatsApp.')}catch(e){showText(txt)}}
+function softRender(){const a=document.activeElement;if(a&&app.contains(a)&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)&&a.type!=='checkbox'){deferred=true;return}render()}
+app.addEventListener('focusout',()=>{setTimeout(()=>{const a=document.activeElement;if(deferred&&!(a&&app.contains(a)&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)))render()},350)});
+
+/* ---------- vista por día (celular) ---------- */
+function chipS(kind,id,ord){
+  if(kind==='p'){const p=person(id);if(!p)return'';return `<div class="chip p st ${p.r==='alm'?'alm':''}" style="--h:${p.h}">${esc(p.n)}${ord?`<span class="ord">${CIRC[ord]||ord}</span>`:''}</div>`}
+  const l=kind==='m'?cfg.machines:cfg.vehicles;const x=l.find(y=>y.id===id);return x?`<div class="chip ${kind} st">${esc(x.n)}</div>`:''}
+function renderDayView(){
+  const days=weekDays(weekStart);const today=iso(new Date());
+  if(dayIdx==null||dayIdx<0||dayIdx>6)dayIdx=Math.max(0,days.indexOf(today));
+  const d=days[dayIdx];const D=days.map(dayOf);const day=D[dayIdx];
+  const tabs=days.map((x,i)=>{const n=new Set();Object.values(D[i].cells).forEach(c=>(c.p||[]).forEach(q=>n.add(q)));return `<button class="dtab ${i===dayIdx?'on':''} ${x===today?'today':''}" data-act="dayi" data-i="${i}" aria-pressed="${i===dayIdx}"><b>${DOW[pdate(x).getDay()]}</b><span>${pdate(x).getDate()}</span><small>${n.size}</small></button>`}).join('');
+  const cards=rowsOf(weekStart).filter(pid=>day.cells[pid]&&project(pid)).map(pid=>{const pr=project(pid),c=day.cells[pid];const cl=cfg.clients.find(x=>x.id===pr.c);
+    return `<div class="dcard"><div class="dt"><b>${esc(pr.n)}</b><span>${cl&&cl.q?'Pide curso '+esc(cl.n):''}</span></div><div class="dchips">${(c.v||[]).map(x=>chipS('v',x)).join('')}${(c.m||[]).map(x=>chipS('m',x)).join('')}${(c.p||[]).map(x=>chipS('p',x,ordNum(day,x,pid))).join('')}</div></div>`}).join('');
+  const sp=SPECIAL.filter(([k])=>day[k].length).map(([k,name])=>`<div class="dcard sp"><div class="dt"><b>${name}</b></div><div class="dchips">${day[k].map(x=>chipS('p',x)).join('')}</div></div>`).join('');
+  const free=cfg.people.filter(p=>p.a&&!placed(day,'p',p.id)).map(p=>chipS('p',p.id)).join('')+cfg.machines.filter(m=>!(m.from&&d<m.from)&&!placed(day,'m',m.id)).map(m=>chipS('m',m.id)).join('')+cfg.vehicles.filter(v=>!v.x&&!placed(day,'v',v.id)).map(v=>chipS('v',v.id)).join('');
+  const dt=pdate(d);
+  return `${alertsBlock(weekAlerts())}<div class="page dayv"><div class="dtabs">${tabs}</div><h2 class="dh2">${DOW[dt.getDay()]} ${dt.getDate()} de ${MONTHS[dt.getMonth()]}</h2>${cards||'<p class="empty">Sin proyectos asignados este día.</p>'}${sp}<div class="dcard free"><div class="dt"><b>Disponibles</b></div><div class="dchips">${free||'<span class="empty">Todo asignado</span>'}</div></div></div>`}
+
+/* ---------- resumen por persona y día ---------- */
+function sumData(){
+  const days=weekDays(weekStart);const D=days.map(dayOf);const names={rest:'Descanso',alm:'Almacén',cur:'Curso',fal:'Falta'};
+  const ppl=cfg.people.filter(p=>p.a||D.some(x=>placed(x,'p',p.id)));
+  const rows=ppl.map(p=>{let worked=0;const cells=D.map(x=>{const cs=orderOf(x,p.id);
+    if(cs.length){worked++;return{t:cs.map(k=>{const pr=project(k);return pr?pr.n:k}).join(' → '),k:'w'}}
+    const sp=['rest','alm','cur','fal'].find(k=>x[k].includes(p.id));return sp?{t:names[sp],k:sp}:{t:'',k:''}});
+    return{p,cells,worked}});
+  return{days,rows}}
+function sumText(){const{days,rows}=sumData();let t=`ASIGNACIÓN · SEMANA ${weekNo(weekStart)} (${rangeText(weekStart)})\n`;
+  rows.forEach(r=>{const parts=days.map((d,i)=>r.cells[i].t?`${DOW[pdate(d).getDay()]} ${pdate(d).getDate()}: ${r.cells[i].t}`:null).filter(Boolean);
+    if(parts.length)t+=`\n${r.p.n} (${r.worked} día${r.worked===1?'':'s'} en obra)\n  `+parts.join('\n  ')+'\n'});return t}
+function renderSum(){
+  const{days,rows}=sumData();const today=iso(new Date());
+  return `<div class="page"><div class="card"><h2>Resumen por persona y día</h2><p>Dónde estuvo cada quien cada día de la semana. "Días" cuenta los días con proyecto asignado. Si alguien va a dos trabajos el mismo día aparecen los dos en orden (A → B). Úsalo para imprimir o mandar a quien lleva el control de horas.</p>
+  <div class="mx"><table><thead><tr><th>Persona</th>${days.map(d=>`<th${d===today?' style="box-shadow:inset 0 -3px 0 var(--accent)"':''}>${DOW[pdate(d).getDay()]} ${pdate(d).getDate()}</th>`).join('')}<th>Días</th></tr></thead><tbody>${rows.map(r=>`<tr><td><span class="chip p st" style="--h:${r.p.h}">${esc(r.p.n)}</span></td>${r.cells.map(c=>`<td class="sc ${c.k}">${c.t?esc(c.t):'<span class="empty">—</span>'}</td>`).join('')}<td><b>${r.worked}</b></td></tr>`).join('')}</tbody></table></div></div></div>`}
+
+/* ---------- proyectos pendientes ---------- */
+const PF=[['n','Proyecto','text'],['cl','Cliente','text'],['area','Área','text'],['sys','Sistema','text'],['f','Fecha sugerida','date'],['d','Días','number'],['g','Gente','number'],['note','Notas','text']];
+function savePend(id,patch){const nx=Object.assign({},pendDocs.get(id)||{},patch);pendDocs.set(id,nx);if(db)queue('pend/'+id,()=>db.doc('pend/'+id).set(nx))}
+function delPend(id){pendDocs.delete(id);if(db)queue('pend/'+id,()=>db.doc('pend/'+id).delete());render()}
+function schedulePend(id){
+  const x=pendDocs.get(id);if(!x)return;const name=(x.n||'').trim().toUpperCase();if(!name){toast('Ponle nombre al proyecto.');return}
+  const ws=x.f?weekStartOf(x.f):weekStart;
+  let pr=cfg.projects.find(p=>p.n===name);const pid=pr?pr.id:'p_'+slug(name)+'_'+Date.now().toString(36).slice(-3);
+  if(!pr){const cn=((x.cl||'').trim()||name.replace(/\s+(I|II|III|IV)$/,'')).toUpperCase();
+    saveCfg(n=>{let c=n.clients.find(k=>k.n===cn);if(!c){c={id:slug(cn)||pid,n:cn,q:0};n.clients.push(c)}n.projects.push({id:pid,n:name,c:c.id})})}
+  const r=rowsOf(ws).slice();if(!r.includes(pid)){r.push(pid);saveWeek(ws,{rows:r,n:weekNo(ws)})}
+  savePend(id,{st:'prog',sw:ws});weekStart=ws;dayIdx=null;tab='board';render();
+  toast(`${name} quedó en la semana ${weekNo(ws)}. Ahora asígnale gente.`)}
+function pfield(id,k,label,type,val,dis){return `<label>${label}<input type="${type}" ${type==='number'?'min="0" step="1" inputmode="numeric"':''} value="${esc(val==null?'':val)}" data-act="pf" data-id="${esc(id)}" data-k="${k}" ${dis} aria-label="${label}"></label>`}
+function renderPend(){
+  const dis=canWrite?'':'disabled';
+  const all=[...pendDocs.entries()].map(([id,x])=>Object.assign({id},x));
+  const st=x=>x.st||'pend';const cnt=k=>k==='all'?all.length:all.filter(x=>st(x)===k).length;
+  const list=all.filter(x=>pfilter==='all'||st(x)===pfilter).sort((a,b)=>(a.f||'9999').localeCompare(b.f||'9999')||(a.ts||0)-(b.ts||0));
+  const lab={pend:'Pendiente',prog:'En el tablero',done:'Hecho'};
+  const form=canWrite?`<div class="card"><h2>Nuevo pendiente</h2><p>Trabajos vendidos o por programar. Cuando tengan fecha, pásalos al tablero con un botón y ahí les asignas gente.</p>
+    <div class="fg">${PF.map(([k,l,t])=>`<label>${l}<input type="${t}" id="pe_${k}" ${t==='number'?'min="0" step="1" inputmode="numeric"':''} aria-label="${l}"></label>`).join('')}</div>
+    <div class="rowf"><button class="btn primary" data-act="padd">Agregar a pendientes</button></div></div>`:'';
+  const cards=list.map(x=>{const s=st(x);const idq=esc(x.id);
+    const btns=canWrite?`<div class="rowf">${s==='pend'?`<button class="btn primary" data-act="psched" data-id="${idq}">Pasar al tablero${x.f?'':' (semana abierta)'}</button><button class="btn" data-act="pst" data-v="done" data-id="${idq}">Marcar hecho</button>`
+      :s==='prog'?`<button class="btn" data-act="pgo" data-id="${idq}">Ver en el tablero</button><button class="btn" data-act="pst" data-v="done" data-id="${idq}">Marcar hecho</button><button class="btn" data-act="pst" data-v="pend" data-id="${idq}">Regresar a pendientes</button>`
+      :`<button class="btn" data-act="pst" data-v="pend" data-id="${idq}">Reabrir</button>`}<button class="btn danger" data-act="pdel" data-id="${idq}">Eliminar</button></div>`:'';
+    return `<div class="card pcard ${s}"><div class="rowf" style="justify-content:space-between;margin-top:0"><b class="ptitle">${esc(x.n||'(sin nombre)')}</b><span class="pbadge">${lab[s]}${x.f?' · semana '+weekNo(weekStartOf(x.f)):''}</span></div>
+    <div class="fg">${PF.map(([k,l,t])=>pfield(x.id,k,l,t,x[k],dis)).join('')}</div>${btns}</div>`}).join('');
+  return `<div class="page">${form}<div class="rowf" style="margin:0 0 10px"><span class="seg">${[['pend','Pendientes'],['prog','Programados'],['done','Hechos'],['all','Todos']].map(([k,n])=>`<button data-act="pfil" data-v="${k}" aria-pressed="${pfilter===k}">${n} (${cnt(k)})</button>`).join('')}</span></div>
+  ${cards||'<div class="card"><p style="margin:0">No hay proyectos en esta lista.</p></div>'}</div>`}
+
+/* ---------- vistas ---------- */
+function chipP(id,day,cont,n){const p=person(id);if(!p)return'';let flag='';if(cont.startsWith('c:')){const pr=project(cont.slice(2));if(pr&&courseStatus(id,pr.c)==='no')flag='<i class="flag" title="Sin curso"></i>'}
+  return `<div class="chip p ${p.r==='alm'?'alm':''}" style="--h:${p.h}" tabindex="0" data-kind="p" data-id="${esc(id)}" data-day="${day}" data-cont="${esc(cont)}"${n?` data-ord="${n}"`:''}>${esc(p.n)}${n?`<span class="ord" title="Orden del día: toca para cambiar">${CIRC[n]||n}</span>`:''}${flag}</div>`}
+function chipM(id,day,cont){const m=cfg.machines.find(x=>x.id===id);return m?`<div class="chip m" tabindex="0" data-kind="m" data-id="${esc(id)}" data-day="${day}" data-cont="${esc(cont)}">${esc(m.n)}</div>`:''}
+function chipV(id,day,cont){const v=cfg.vehicles.find(x=>x.id===id);return v?`<div class="chip v" tabindex="0" data-kind="v" data-id="${esc(id)}" data-day="${day}" data-cont="${esc(cont)}">${esc(v.n)}</div>`:''}
+function renderBoard(){
+  if(boardView==='day')return renderDayView();
+  const days=weekDays(weekStart);const today=iso(new Date());const rows=rowsOf(weekStart);const D=days.map(dayOf);
+  const alerts=weekAlerts();const bad=alerts.filter(a=>a.lvl==='bad').length;
+  let top=`<div class="grid"><div class="lab free" style="border-left-color:var(--accent);background:var(--panel)"><b>Semana ${weekNo(weekStart)}</b><span>vie a jue</span></div>`;
+  days.forEach((d,i)=>{const dt=pdate(d);const day=D[i];const ns=new Set();Object.values(day.cells).forEach(c=>(c.p||[]).forEach(x=>ns.add(x)));const n=ns.size;
+    const free=cfg.people.filter(p=>p.a&&!placed(day,'p',p.id)).length;
+    top+=`<div class="dh ${d===today?'today':''}"><div class="n">${DOW[dt.getDay()]} ${dt.getDate()}</div><div class="m">${MONTHS[dt.getMonth()]}</div><div class="c"><span>${n} en obra · ${free} libres</span><button data-act="copyday" data-i="${i}" title="Copia este día al siguiente">copiar →</button></div></div>`});
+  top+='</div>';
+  let dock=`<div class="grid"><div class="lab free"><b>Disponibles</b><span>Personal, máquinas y camionetas</span></div>`;
+  days.forEach((d,i)=>{const day=D[i];
+    const f=cfg.people.filter(p=>p.a&&!placed(day,'p',p.id)).map(p=>chipP(p.id,d,'free')).join('')
+      +cfg.machines.filter(m=>!(m.from&&d<m.from)&&!placed(day,'m',m.id)).map(m=>chipM(m.id,d,'free')).join('')
+      +cfg.vehicles.filter(v=>!v.x&&!placed(day,'v',v.id)).map(v=>chipV(v.id,d,'free')).join('');
+    dock+=`<div class="cell freec" data-day="${d}" data-cont="free">${f||'<span class="empty">Todo asignado</span>'}</div>`});
+  dock+='</div>';
+  let body='<div class="grid">';
+  rows.forEach(pid=>{const pr=project(pid);if(!pr)return;const cl=cfg.clients.find(c=>c.id===pr.c);let tot=0;D.forEach(x=>{const c=x.cells[pid];if(c)tot+=(c.p||[]).length+(c.m||[]).length+(c.v||[]).length});
+    body+=`<div class="lab"><b>${esc(pr.n)}</b><span>${cl&&cl.q?'Pide curso '+esc(cl.n):'Sin curso requerido'}</span>${canWrite?`<button class="x" data-act="delrow" data-pid="${esc(pid)}">quitar</button>`:''}</div>`;
+    days.forEach((d,i)=>{const c=D[i].cells[pid];const inf=(D[i].inf||[]).includes(pid);
+      body+=`<div class="cell ${inf?'inf':''}" data-day="${d}" data-cont="c:${esc(pid)}">${c?(c.v||[]).map(x=>chipV(x,d,'c:'+pid)).join('')+(c.m||[]).map(x=>chipM(x,d,'c:'+pid)).join('')+(c.p||[]).map(x=>chipP(x,d,'c:'+pid,ordNum(D[i],x,pid))).join(''):''}${c?`<button class="cp" data-act="copycell" data-day="${d}" data-pid="${esc(pid)}" title="Copiar al día siguiente">→</button>`:''}</div>`})});
+  SPECIAL.forEach(([k,name,sub])=>{body+=`<div class="lab sp"><b>${name}</b><span>${sub}</span></div>`;days.forEach((d,i)=>{body+=`<div class="cell spc" data-day="${d}" data-cont="${k}">${D[i][k].map(id=>chipP(id,d,k)).join('')}</div>`})});
+  body+='</div>';
+  const avail=cfg.projects.filter(p=>!rows.includes(p.id)&&!p.x);
+  const empty=!rows.length&&!D.some(x=>SPECIAL.some(s=>x[s[0]].length));
+  return `${showAlerts?`<div class="alerts"><b>Revisión de la semana</b>${alerts.length?'<ul>'+alerts.map(a=>`<li style="color:${a.lvl==='bad'?'var(--bad)':'inherit'}">${esc(a.t)}</li>`).join('')+'</ul>':'<p style="margin:4px 0">Sin avisos.</p>'}</div>`:''}
+  <div class="wrap" id="wrap"><div class="top">${top}</div>${body}<div class="dock ${pinned?'':'nofix'}">${dock}</div></div>
+  <div class="addrow">${canWrite?`<b>Agregar o quitar proyecto:</b><select id="addsel" aria-label="Proyecto"><option value="">Elige un proyecto…</option>${cfg.projects.filter(p=>!p.x).slice().sort((a,b)=>a.n.localeCompare(b.n)).map(p=>`<option value="${esc(p.id)}">${rows.includes(p.id)?'✓ ':''}${esc(p.n)}</option>`).join('')}</select><button class="btn primary" data-act="addrow">Agregar</button><button class="btn danger" data-act="rmrow">Quitar</button><span style="color:var(--muted)">o crea uno:</span><input type="text" id="newproj" placeholder="Nombre del proyecto nuevo" aria-label="Proyecto nuevo"><button class="btn" data-act="newrow">Crear y agregar</button>`:''}${empty&&canWrite?`<button class="btn" data-act="copyprev">Copiar semana anterior</button><button class="btn" data-act="seedalm">Poner almacén (descansa domingo)</button>`:''}<span class="empty">Semana vacía: empieza copiando la anterior.</span>${bad?'':''}</div>
+  <div class="hint">Arrastra una ficha a otro proyecto o día. Con Shift al soltar: en otro día copia la ficha; en el mismo día la pone en un segundo trabajo (①, ②). Soltar en "Disponibles" (abajo) la libera. Las máquinas y camionetas se mueven igual.</div>`.replace(empty&&canWrite?'':'<span class="empty">Semana vacía: empieza copiando la anterior.</span>','')}
+function renderCourses(){
+  const cl=cfg.clients.filter(c=>showAllClients||c.q);const ppl=cfg.people.filter(p=>showInactive||p.a);
+  const mx=`<div class="mx"><table><thead><tr><th>Persona</th>${cl.map(c=>`<th>${esc(c.n)}<label><input type="checkbox" data-act="req" data-id="${esc(c.id)}" ${c.q?'checked':''} ${canWrite?'':'disabled'}> pide curso</label>${c.q?`<label>vigencia <input type="number" class="vig" min="0" max="60" data-act="vig" data-id="${esc(c.id)}" value="${vigOf(c)}" ${canWrite?'':'disabled'} aria-label="Vigencia en meses de ${esc(c.n)}"> meses</label>`:''}</th>`).join('')}</tr></thead><tbody>${ppl.map(p=>`<tr><td><span class="chip p" style="--h:${p.h};cursor:default">${esc(p.n)}</span></td>${cl.map(c=>{const r=(cfg.courses[c.id]||{})[p.id];const st=!c.q&&!r?'':r?(r.ok?'ok':'no'):'unk';const lab=r?(r.ok?'Sí':'No'):'?';return `<td><button class="cs ${st||'unk'}" data-act="cs" data-p="${esc(p.id)}" data-c="${esc(c.id)}" ${canWrite?'':'disabled'} aria-label="${esc(p.n)} curso ${esc(c.n)}: ${lab}">${lab}${r&&r.f?`<small>${esc(r.f)}</small>`:''}</button></td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
+  const cx=cfg.cx||[];
+  return `<div class="page">${expCard()}<div class="card"><h2>Cursos por cliente</h2><p>Toca una celda para cambiar entre "?" (sin dato), "Sí" y "No". Solo los clientes marcados como "pide curso" generan avisos. Hay clientes que no piden curso: deja la casilla vacía.</p>
+  <div class="rowf"><b>Si falta el curso:</b><span class="seg"><button data-act="mode" data-v="warn" aria-pressed="${cfg.mode!=='block'}">Avisar y dejar poner</button><button data-act="mode" data-v="block" aria-pressed="${cfg.mode==='block'}">No dejar poner</button></span>
+  <label><input type="checkbox" data-act="inact" ${showInactive?'checked':''}> ver personal inactivo</label><label><input type="checkbox" data-act="allcl" ${showAllClients?'checked':''}> ver todos los clientes</label></div>${mx}</div>
+  <div class="card"><h2>Hoja "Cursos" del Excel</h2><p>Estos son los nombres completos de tu hoja. Ya vinculé a quienes se identifican con certeza por su nombre. Elige quién es cada uno de los demás y se cargan sus fechas. Las celdas vacías en el Excel se cuentan como "No".</p>
+  <div class="mx"><table><thead><tr><th>Nombre completo</th><th>Cursos con fecha</th><th>Es</th></tr></thead><tbody>${cx.map((x,i)=>`<tr><td>${esc(x.full)}</td><td style="text-align:left;white-space:normal">${Object.keys(x.c).map(k=>esc((cfg.clients.find(c=>c.id===k)||{n:k}).n)).join(', ')||'ninguno'}</td><td><select data-act="link" data-i="${i}" ${canWrite?'':'disabled'}><option value="">Sin vincular</option>${cfg.people.map(p=>`<option value="${esc(p.id)}" ${x.link===p.id?'selected':''}>${esc(p.n)}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div></div></div>`}
+function renderCatalog(){
+  const dis=canWrite?'':'disabled';
+  return `<div class="page"><div class="two">
+  <div class="card"><h2>Personal</h2><p>Quita la palomita de "activo" a quien ya no sale a trabajar. No se borra su historial.</p>${cfg.people.map(p=>`<div class="rowf"><input type="text" value="${esc(p.n)}" data-act="pname" data-id="${esc(p.id)}" ${dis} aria-label="Nombre"><label><input type="checkbox" data-act="pact" data-id="${esc(p.id)}" ${p.a?'checked':''} ${dis}> activo</label><label><input type="checkbox" data-act="palm" data-id="${esc(p.id)}" ${p.r==='alm'?'checked':''} ${dis}> almacén</label></div>`).join('')}
+  <div class="rowf"><input type="text" id="np" placeholder="Nuevo nombre" ${dis}><button class="btn primary" data-act="addp" ${dis}>Agregar persona</button></div></div>
+  <div><div class="card"><h2>Proyectos</h2><p>Cada proyecto pertenece a un cliente. Los cursos se piden por cliente, así que ALIGN I y ALIGN II comparten curso.</p>${cfg.projects.map(p=>`<div class="rowf"><input type="text" value="${esc(p.n)}" data-act="prname" data-id="${esc(p.id)}" ${dis} aria-label="Proyecto"><select data-act="prcl" data-id="${esc(p.id)}" ${dis} aria-label="Cliente">${cfg.clients.map(c=>`<option value="${esc(c.id)}" ${c.id===p.c?'selected':''}>${esc(c.n)}</option>`).join('')}</select></div>`).join('')}
+  <div class="rowf"><input type="text" id="npr" placeholder="Nuevo proyecto" ${dis}><input type="text" id="ncl" placeholder="Cliente (si es nuevo)" ${dis}><button class="btn primary" data-act="addpr" ${dis}>Agregar proyecto</button></div></div>
+  <div class="card"><h2>Máquinas</h2>${cfg.machines.map(m=>`<div class="rowf"><input type="text" value="${esc(m.n)}" data-act="mname" data-id="${esc(m.id)}" ${dis} aria-label="Máquina"><label>disponible desde <input type="date" value="${esc(m.from||'')}" data-act="mfrom" data-id="${esc(m.id)}" ${dis}></label></div>`).join('')}<div class="rowf"><input type="text" id="nm" placeholder="Nueva máquina" ${dis}><button class="btn primary" data-act="addm" ${dis}>Agregar máquina</button></div></div>
+  <div class="card"><h2>Camionetas</h2>${cfg.vehicles.map(v=>`<div class="rowf"><input type="text" value="${esc(v.n)}" data-act="vname" data-id="${esc(v.id)}" ${dis} aria-label="Camioneta"><label><input type="checkbox" data-act="vact" data-id="${esc(v.id)}" ${v.x?'':'checked'} ${dis}> activa</label></div>`).join('')}<div class="rowf"><input type="text" id="nv" placeholder="Nueva camioneta" ${dis}><button class="btn primary" data-act="addv" ${dis}>Agregar camioneta</button></div></div></div></div></div>`}
+function renderHelp(){
+  return `<div class="page"><div class="card help"><h2>Cómo funciona</h2><p>Guía rápida del tablero. Todo lo que cambias se guarda solo y lo ven al momento quienes tienen el enlace.</p>
+  <h3>Mover fichas</h3><ul><li>Arrastra una ficha (persona, máquina o camioneta) al proyecto y día donde va.</li><li>Una persona, máquina o camioneta solo puede estar en un lugar por día; si la mueves, sale del lugar donde estaba.</li><li>Para liberar una ficha, arrástrala al renglón <b>Disponibles</b> de abajo.</li></ul>
+  <h3>Doble trabajo el mismo día</h3><ul><li>Si alguien termina un trabajo y luego se va a otro, arrastra su ficha al segundo proyecto manteniendo <kbd>Shift</kbd>.</li><li>La ficha queda en los dos con un número: <b>①</b> primero, <b>②</b> después. Toca el número para cambiar el orden.</li><li>Esa persona cuenta una sola vez en el resumen del día, y en el PDF sale como "(1°)" y "(2°)".</li></ul>
+  <h3>Copiar para ahorrar tiempo</h3><ul><li><b>Copiar semana anterior</b>: llena la semana con lo de la semana pasada; después solo mueves lo que cambió.</li><li><b>copiar →</b> en el encabezado de un día: lo copia al día siguiente.</li><li>La flecha <b>→</b> dentro de una celda: copia solo ese proyecto al día siguiente.</li><li>Arrastrar con <kbd>Shift</kbd> a otro día copia la ficha en lugar de moverla.</li></ul>
+  <h3>Proyectos de la semana</h3><ul><li>Abajo del tablero elige un proyecto y pulsa <b>Agregar</b> o <b>Quitar</b>. Los que ya están en la semana llevan ✓.</li><li>Para un proyecto nuevo, escribe su nombre y pulsa <b>Crear y agregar</b>.</li></ul>
+  <h3>Descansos, almacén, curso y falta</h3><p>Son renglones al final del tablero. Arrastra ahí a quien no sale a obra ese día. Checo está marcado como almacén y normalmente descansa el domingo.</p>
+  <h3>Cursos</h3><ul><li>En la pestaña <b>Cursos</b> marca qué clientes piden curso y quién lo tiene (toca la celda: ?, Sí, No).</li><li>Si pones a alguien sin curso, su ficha muestra un punto rojo y el botón de avisos lo cuenta.</li><li>Puedes elegir entre <b>Avisar y dejar poner</b> o <b>No dejar poner</b>.</li><li>Arriba de la pestaña se listan los cursos por vencer: un aviso un mes antes y otro 15 días antes. La vigencia (12 meses por defecto) se cambia por cliente.</li></ul>
+  <h3>Proyectos pendientes</h3><ul><li>En la pestaña <b>Pendientes</b> anotas los trabajos por programar: proyecto, cliente, área, sistema, fecha sugerida, días y gente.</li><li>Cuando ya tengan fecha, <b>Pasar al tablero</b> agrega el proyecto a la semana de esa fecha y te lleva ahí para asignarle gente.</li><li>Después puedes marcarlo como hecho. Los pendientes no estorban a la asignación: viven aparte.</li></ul>
+  <h3>Resumen por persona y día</h3><ul><li>En la pestaña <b>Resumen</b> ves a dónde fue cada quien cada día de la semana, con los días en obra.</li><li><b>Imprimir PDF</b> lo descarga en hoja carta horizontal. <b>Copiar texto</b> lo deja listo para pegar en WhatsApp.</li></ul>
+  <h3>En el celular</h3><ul><li>En el Tablero, el botón <b>Día</b> muestra un día a la vez, con los proyectos y la gente. Es lo más cómodo para consultar desde el teléfono. Para mover fichas usa la vista <b>Semana</b>.</li></ul>
+  <h3>Imprimir</h3><p>El botón <b>Imprimir</b> descarga un PDF de la semana en hoja carta horizontal. Ábrelo e imprímelo, o mándalo por WhatsApp.</p>
+  <h3>Catálogo</h3><p>Ahí das de alta o de baja personas, proyectos, máquinas y camionetas, y cambias nombres. Quitar la palomita de "activo" oculta a la persona sin borrar su historial.</p>
+  <h3>Navegar</h3><p>Usa ◀ ▶ para cambiar de semana y <b>Hoy</b> para volver a la actual. La semana va de viernes a jueves.</p></div></div>`}
+function renderImport(){
+  return `<div class="center"><h1>Tablero de asignación</h1><p>Todavía no hay datos guardados. Puedo cargar tus semanas 1 a 8 y 40 a 46 del Excel, con el personal, los proyectos, las máquinas, las camionetas y la hoja de cursos.</p>${canWrite?`<p><button class="btn primary" id="imp" data-act="import">Cargar datos de mis Excel</button></p><div id="prog"></div>`:'<p>Pide a quien administra este tablero que cargue los datos iniciales.</p>'}</div>`}
+function render(){
+  deferred=false;
+  if(dragging){pendingRender=true;return}
+  const keep=document.getElementById('wrap');const sl=keep?keep.scrollLeft:0,st=keep?keep.scrollTop:0;
+  if(cfgState==='loading'){return}
+  if(cfgState==='empty'){app.innerHTML=renderImport();return}
+  if(cfgState==='error'){app.innerHTML='<div class="center"><h1>Sin conexión</h1><p>No se pudieron leer los datos compartidos. Revisa tu conexión y vuelve a abrir el tablero.</p></div>';return}
+  const alerts=tab==='board'?weekAlerts():[];const bad=alerts.filter(a=>a.lvl==='bad').length;const ex=tab==='board'?expiring().filter(x=>x.left>=0):[];
+  const head=`<div class="bar"><div class="brand"><img class="logo" src="logo.png" alt="Concrete Coatings Solutions"><span>Asignación<small>de personal</small></span></div>
+  <div class="tabs" role="tablist">${[['board','Tablero'],['pend','Pendientes'],['sum','Resumen'],['courses','Cursos'],['catalog','Catálogo'],['help','Cómo funciona']].map(([k,n])=>`<button class="tab" role="tab" data-act="tab" data-v="${k}" aria-selected="${tab===k}">${n}</button>`).join('')}</div>
+  ${(tab==='board'||tab==='sum')?`<div class="weeknav"><button class="btn" data-act="wk" data-v="-1" aria-label="Semana anterior">◀</button><div class="weektitle">Semana ${weekNo(weekStart)}<small>${rangeText(weekStart)}</small></div><button class="btn" data-act="wk" data-v="1" aria-label="Semana siguiente">▶</button><button class="btn" data-act="wk" data-v="0">Hoy</button></div>`:''}
+  <div class="spacer"></div>
+  ${tab==='board'?`<div class="seg" role="group" aria-label="Vista"><button data-act="bv" data-v="week" aria-pressed="${boardView==='week'}">Semana</button><button data-act="bv" data-v="day" aria-pressed="${boardView==='day'}">Día</button></div>${ex.length?`<button class="pill ${ex.some(x=>x.lvl==='d15')?'bad':'warn'}" data-act="tab" data-v="courses">${ex.length} curso${ex.length===1?'':'s'} por vencer</button>`:''}<button class="pill ${bad?'bad':'ok'}" data-act="alerts">${bad?bad+' sin curso':alerts.length?alerts.length+' avisos':'Sin avisos'}</button>${boardView==='week'?`<label class="pill"><input type="checkbox" data-act="pin" ${pinned?'checked':''}> Disponibles fijos</label>`:''}<button class="btn" data-act="print">Imprimir</button>${canWrite?`<button class="btn" data-act="copyprev">Copiar semana anterior</button>`:''}`:tab==='sum'?`<button class="btn primary" data-act="printsum">Imprimir PDF</button><button class="btn" data-act="copysum">Copiar texto</button>`:''}</div>
+  ${canWrite?'':'<div class="banner">Modo lectura: puedes ver todo el tablero, pero solo los editores pueden mover fichas y guardar cambios.</div>'}`;
+  app.innerHTML=head+'<main>'+(tab==='board'?renderBoard():tab==='pend'?renderPend():tab==='sum'?renderSum():tab==='courses'?renderCourses():tab==='help'?renderHelp():renderCatalog())+'</main>';
+  const w=document.getElementById('wrap');if(w){w.scrollLeft=sl;w.scrollTop=st}}
+
+/* ---------- arrastre con puntero (ratón y tacto) ---------- */
+let drag=null;
+app.addEventListener('pointerdown',e=>{
+  if(!canWrite||e.button>0)return;const ch=e.target.closest('.chip[data-kind]');if(!ch||ch.classList.contains('dis'))return;
+  drag={el:ch,kind:ch.dataset.kind,id:ch.dataset.id,day:ch.dataset.day,cont:ch.dataset.cont,x:e.clientX,y:e.clientY,on:false,ghost:null,target:null,copy:false}});
+window.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  if(!drag.on){if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<6)return;drag.on=true;dragging=true;drag.el.classList.add('dragging');const g=drag.el.cloneNode(true);g.classList.remove('dragging');g.classList.add('ghost');g.removeAttribute('tabindex');document.body.appendChild(g);drag.ghost=g;drag.since=0;drag.timer=setInterval(autoScroll,40)}
+  e.preventDefault();drag.copy=e.altKey||e.shiftKey;
+  drag.ghost.style.left=(e.clientX+8)+'px';drag.ghost.style.top=(e.clientY+8)+'px';
+  const t=document.elementFromPoint(e.clientX,e.clientY);const c=t&&t.closest?t.closest('[data-cont]:not(.chip)'):null;
+  if(drag.target&&drag.target!==c)drag.target.classList.remove('over');
+  drag.target=c&&c.classList.contains('cell')?c:null;if(drag.target)drag.target.classList.add('over');
+  drag.px=e.clientX;drag.py=e.clientY;},{passive:false});
+function autoScroll(){
+  if(!drag||!drag.on)return;const w=document.getElementById('wrap');if(!w)return;const r=w.getBoundingClientRect();
+  const dk=w.querySelector('.dock:not(.nofix)');const bot=dk?dk.getBoundingClientRect().top:r.bottom;const tp=w.querySelector('.top').getBoundingClientRect().bottom;
+  const x=drag.px,y=drag.py;let dx=0,dy=0;
+  if(y>bot-34&&y<bot)dy=12;else if(y<tp+34&&y>tp)dy=-12;
+  if(x>r.right-40)dx=14;else if(x<r.left+190&&x>r.left+148)dx=-14;
+  if(!dx&&!dy){drag.since=0;return}
+  if(!drag.since){drag.since=Date.now();return}
+  if(Date.now()-drag.since>450){w.scrollTop+=dy;w.scrollLeft+=dx}}
+function endDrag(ok){
+  if(!drag)return;const d=drag;drag=null;clearInterval(d.timer);
+  if(d.on){d.ghost.remove();d.el.classList.remove('dragging');if(d.target)d.target.classList.remove('over');dragging=false;
+    if(ok&&d.target)move({kind:d.kind,id:d.id,srcDay:d.day,srcCont:d.cont,dstDay:d.target.dataset.day,dstCont:d.target.dataset.cont,copy:d.copy});
+    else render();pendingRender=false}
+  else if(ok&&d.kind==='p'&&d.el.dataset.ord)rotateOrd(d.day,d.id)}
+window.addEventListener('pointerup',()=>endDrag(true));window.addEventListener('pointercancel',()=>endDrag(false));
+window.addEventListener('keydown',e=>{if(e.key==='Escape'&&drag)endDrag(false)});
+
+/* ---------- eventos de la interfaz ---------- */
+app.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
+  if(['pname','pact','palm','prname','prcl','mname','mfrom','vname','link','req','vact','vig','pf'].includes(a))return;
+  if(a==='tab'){tab=b.dataset.v;render()}
+  else if(a==='wk'){const v=+b.dataset.v;weekStart=v===0?weekStartOf(iso(new Date())):addDays(weekStart,7*v);dayIdx=null;render()}
+  else if(a==='alerts'){showAlerts=!showAlerts;render()}
+  else if(a==='copyprev'){copyPrevWeek()}
+  else if(a==='print'){printWeek(b)}
+  else if(a==='seedalm'){seedAlmacen()}
+  else if(a==='copyday'){copyDayNext(+b.dataset.i)}
+  else if(a==='copycell'){copyCellNext(b.dataset.day,b.dataset.pid)}
+  else if(a==='addrow'){const v=document.getElementById('addsel').value;if(!v){toast('Elige un proyecto de la lista.');return}const r=rowsOf(weekStart).slice();if(r.includes(v)){toast('Ese proyecto ya está en la semana.');return}r.push(v);saveWeek(weekStart,{rows:r,n:weekNo(weekStart)});render()}
+  else if(a==='rmrow'){const v=document.getElementById('addsel').value;if(!v){toast('Elige un proyecto de la lista.');return}removeRow(v)}
+  else if(a==='newrow'){const v=document.getElementById('newproj').value.trim().toUpperCase();if(!v){toast('Escribe el nombre del proyecto nuevo.');return}
+    let pr=cfg.projects.find(p=>p.n===v);const id=pr?pr.id:'p_'+slug(v)+'_'+Date.now().toString(36).slice(-3);
+    if(!pr){const cn=v.replace(/\s+(I|II|III|IV)$/,'');saveCfg(n=>{let c=n.clients.find(x=>x.n===cn);if(!c){c={id:slug(cn)||id,n:cn,q:0};n.clients.push(c)}n.projects.push({id,n:v,c:c.id})})}
+    const r=rowsOf(weekStart).slice();if(!r.includes(id)){r.push(id);saveWeek(weekStart,{rows:r,n:weekNo(weekStart)})}render()}
+  else if(a==='delrow'){removeRow(b.dataset.pid)}
+  else if(a==='cs'){const p=b.dataset.p,c=b.dataset.c;saveCfg(n=>{n.courses[c]=n.courses[c]||{};const r=n.courses[c][p];if(!r)n.courses[c][p]={ok:1};else if(r.ok)n.courses[c][p]={ok:0};else delete n.courses[c][p]})}
+  else if(a==='mode'){saveCfg(n=>{n.mode=b.dataset.v})}
+  else if(a==='addp'){const v=document.getElementById('np').value.trim().toUpperCase();if(!v)return;saveCfg(n=>{n.people.push({id:slug(v)+'_'+Date.now().toString(36).slice(-3),n:v,a:1,h:Math.floor(Math.random()*360),r:''})})}
+  else if(a==='addpr'){const v=document.getElementById('npr').value.trim().toUpperCase();if(!v)return;const cn=(document.getElementById('ncl').value.trim()||v.replace(/\s+(I|II|III)$/,'')).toUpperCase();saveCfg(n=>{let c=n.clients.find(x=>x.n===cn);if(!c){c={id:slug(cn),n:cn,q:0};n.clients.push(c)}n.projects.push({id:'p_'+slug(v)+'_'+Date.now().toString(36).slice(-3),n:v,c:c.id})})}
+  else if(a==='addm'){const v=document.getElementById('nm').value.trim();if(!v)return;saveCfg(n=>{n.machines.push({id:'m_'+slug(v)+'_'+Date.now().toString(36).slice(-3),n:v,from:''})})}
+  else if(a==='addv'){const v=document.getElementById('nv').value.trim();if(!v)return;saveCfg(n=>{n.vehicles.push({id:'v_'+slug(v)+'_'+Date.now().toString(36).slice(-3),n:v})})}
+  else if(a==='import'){runImport()}
+  else if(a==='bv'){boardView=b.dataset.v;render()}
+  else if(a==='dayi'){dayIdx=+b.dataset.i;render()}
+  else if(a==='printsum'){printSum(b)}
+  else if(a==='copysum'){copyText(sumText())}
+  else if(a==='pfil'){pfilter=b.dataset.v;render()}
+  else if(a==='padd'){const g=k=>{const e=document.getElementById('pe_'+k);return e?e.value.trim():''};const n=g('n').toUpperCase();if(!n){toast('Escribe el nombre del proyecto.');return}
+    const id='x'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    savePend(id,{n,cl:g('cl').toUpperCase(),area:g('area'),sys:g('sys'),f:g('f'),d:g('d'),g:g('g'),note:g('note'),st:'pend',ts:Date.now()});pfilter='pend';render();toast('Agregado a pendientes.')}
+  else if(a==='psched'){schedulePend(b.dataset.id)}
+  else if(a==='pgo'){const x=pendDocs.get(b.dataset.id);if(x){weekStart=x.sw||(x.f?weekStartOf(x.f):weekStart);dayIdx=null;tab='board';render()}}
+  else if(a==='pst'){savePend(b.dataset.id,{st:b.dataset.v});render()}
+  else if(a==='pdel'){if(await confirmBox('Eliminar pendiente','Se borra de la lista. Si ya estaba en el tablero, el proyecto sigue ahí.','Eliminar'))delPend(b.dataset.id)}});
+app.addEventListener('change',e=>{
+  const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act,id=b.dataset.id,v=b.type==='checkbox'?b.checked:b.value;
+  if(a==='pin'){pinned=v;render()}
+  else if(a==='inact'){showInactive=v;render()}
+  else if(a==='allcl'){showAllClients=v;render()}
+  else if(a==='req')saveCfg(n=>{n.clients.find(c=>c.id===id).q=v?1:0});
+  else if(a==='pname')saveCfg(n=>{if(v.trim())n.people.find(p=>p.id===id).n=v.trim().toUpperCase()});
+  else if(a==='pact')saveCfg(n=>{n.people.find(p=>p.id===id).a=v?1:0});
+  else if(a==='palm')saveCfg(n=>{n.people.find(p=>p.id===id).r=v?'alm':''});
+  else if(a==='prname')saveCfg(n=>{if(v.trim())n.projects.find(p=>p.id===id).n=v.trim().toUpperCase()});
+  else if(a==='prcl')saveCfg(n=>{n.projects.find(p=>p.id===id).c=v});
+  else if(a==='mname')saveCfg(n=>{if(v.trim())n.machines.find(p=>p.id===id).n=v.trim()});
+  else if(a==='mfrom')saveCfg(n=>{n.machines.find(p=>p.id===id).from=v});
+  else if(a==='vname')saveCfg(n=>{if(v.trim())n.vehicles.find(p=>p.id===id).n=v.trim()});
+  else if(a==='vact')saveCfg(n=>{const x=n.vehicles.find(p=>p.id===id);if(v)delete x.x;else x.x=1});
+  else if(a==='vig')saveCfg(n=>{const c=n.clients.find(k=>k.id===id);const q=parseInt(v,10);c.vig=isNaN(q)?12:Math.max(0,Math.min(60,q))});
+  else if(a==='pf'){const k=b.dataset.k;savePend(id,{[k]:(k==='n'||k==='cl')?v.trim().toUpperCase():v.trim()})}
+  else if(a==='link'){const i=+b.dataset.i;saveCfg(n=>{const x=n.cx[i];const prev=x.link;x.link=v;
+    if(prev){Object.keys(n.courses).forEach(c=>{if(n.courses[c][prev]&&n.courses[c][prev].src===i)delete n.courses[c][prev]})}
+    if(v){const sheet=new Set();n.cx.forEach(y=>Object.keys(y.c).forEach(k=>sheet.add(k)));sheet.forEach(c=>{n.courses[c]=n.courses[c]||{};n.courses[c][v]=x.c[c]?{ok:1,f:x.c[c],src:i}:{ok:0,src:i}})}})}});
+
+/* ---------- impresión: PDF horizontal de la semana ---------- */
+function buildPdf(){
+  const {jsPDF}=window.jspdf;const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'letter'});
+  const days=weekDays(weekStart);const D=days.map(dayOf);const W=doc.internal.pageSize.getWidth();
+  let tx=10;if(LOGO){try{doc.addImage(LOGO,'PNG',10,5,52,14);tx=66}catch(e){}}
+  doc.setFont('helvetica','bold');doc.setFontSize(17);doc.text('ASIGNACIÓN DE PERSONAL · SEMANA '+weekNo(weekStart),tx,12);
+  doc.setFont('helvetica','normal');doc.setFontSize(11);doc.text('Del '+rangeText(weekStart),tx,18);
+  const now=new Date();doc.setFontSize(8);doc.text('Impreso el '+now.getDate()+' de '+MONTHS[now.getMonth()]+' de '+now.getFullYear(),W-10,13,{align:'right'});
+  const nm=(list,arr)=>arr.map(id=>(list.find(x=>x.id===id)||{n:''}).n).filter(Boolean);
+  const head=[['PROYECTO'].concat(days.map(d=>DOW[pdate(d).getDay()]+' '+pdate(d).getDate()))];
+  const body=[];
+  rowsOf(weekStart).forEach(pid=>{const pr=project(pid);if(!pr)return;let any=false;
+    const cells=D.map(x=>{const c=x.cells[pid];if(!c)return '';any=true;const eq=nm(cfg.machines,c.m||[]).concat(nm(cfg.vehicles,c.v||[]));return (eq.length?'['+eq.join(', ')+']\n':'')+(c.p||[]).map(id=>{const p=person(id);if(!p)return '';const k=ordNum(x,id,pid);return p.n+(k?' ('+k+'°)':'')}).filter(Boolean).join('\n')});
+    if(any)body.push([pr.n].concat(cells))});
+  const nProj=body.length;
+  SPECIAL.forEach(([k,name])=>{if(D.some(x=>x[k].length))body.push([name.toUpperCase()].concat(D.map(x=>nm(cfg.people,x[k]).join('\n'))))});
+  const free=D.map(x=>cfg.people.filter(p=>p.a&&!placed(x,'p',p.id)).map(p=>p.n).join('\n'));
+  if(free.some(Boolean))body.push(['SIN ASIGNAR'].concat(free));
+  const first=30,cw=(W-20-first)/7;const cs={0:{cellWidth:first,fontStyle:'bold',fillColor:[236,234,226]}};for(let i=1;i<=7;i++)cs[i]={cellWidth:cw};
+  doc.autoTable({head,body,startY:23,margin:{left:10,right:10,bottom:10},theme:'grid',
+    styles:{font:'helvetica',fontSize:10,cellPadding:1.6,textColor:20,lineColor:[120,120,120],lineWidth:0.2,valign:'top',overflow:'linebreak'},
+    headStyles:{fillColor:[0,165,223],textColor:255,fontStyle:'bold',halign:'center',fontSize:11},columnStyles:cs,rowPageBreak:'avoid',
+    didParseCell:h=>{if(h.section==='body'&&h.row.index>=nProj){h.cell.styles.fillColor=[245,244,240];h.cell.styles.fontSize=9}}});
+  return doc.output('blob')}
+function pdfHead(doc,title){
+  const W=doc.internal.pageSize.getWidth();let tx=10;if(LOGO){try{doc.addImage(LOGO,'PNG',10,5,52,14);tx=66}catch(e){}}
+  doc.setFont('helvetica','bold');doc.setFontSize(17);doc.text(title,tx,12);
+  doc.setFont('helvetica','normal');doc.setFontSize(11);doc.text('Del '+rangeText(weekStart),tx,18);
+  const now=new Date();doc.setFontSize(8);doc.text('Impreso el '+now.getDate()+' de '+MONTHS[now.getMonth()]+' de '+now.getFullYear(),W-10,13,{align:'right'})}
+function buildSumPdf(){
+  const{jsPDF}=window.jspdf;const doc=new jsPDF({orientation:'landscape',unit:'mm',format:'letter'});const W=doc.internal.pageSize.getWidth();
+  pdfHead(doc,'RESUMEN POR PERSONA · SEMANA '+weekNo(weekStart));
+  const{days,rows}=sumData();const head=[['PERSONA'].concat(days.map(d=>DOW[pdate(d).getDay()]+' '+pdate(d).getDate())).concat(['DÍAS'])];
+  const body=rows.map(r=>[r.p.n].concat(r.cells.map(c=>c.t)).concat([String(r.worked)]));
+  const first=28,last=13,cw=(W-20-first-last)/7;const cs={0:{cellWidth:first,fontStyle:'bold',fillColor:[236,234,226]},8:{cellWidth:last,halign:'center',fontStyle:'bold'}};for(let i=1;i<=7;i++)cs[i]={cellWidth:cw};
+  const sp=new Set(['Descanso','Almacén','Curso','Falta']);
+  doc.autoTable({head,body,startY:23,margin:{left:10,right:10,bottom:10},theme:'grid',
+    styles:{font:'helvetica',fontSize:9.5,cellPadding:1.6,textColor:20,lineColor:[120,120,120],lineWidth:0.2,valign:'middle',overflow:'linebreak'},
+    headStyles:{fillColor:[0,165,223],textColor:255,fontStyle:'bold',halign:'center',fontSize:10.5},columnStyles:cs,rowPageBreak:'avoid',
+    didParseCell:h=>{if(h.section==='body'&&h.column.index>=1&&h.column.index<=7&&sp.has(h.cell.raw)){h.cell.styles.fillColor=[245,244,240];h.cell.styles.textColor=110}}});
+  return doc.output('blob')}
+async function savePdf(btn,filename,build){
+  let dl=null;try{dl=window.claude?await window.claude.use('downloads'):null}catch(e){}
+  if(!dl||!window.jspdf){toast('La impresión no está disponible en esta vista. Abre el tablero en claude.ai.');return}
+  btn.disabled=true;
+  try{await dl.save({filename,data:build()});toast('PDF listo. Ábrelo e imprímelo, o mándalo por WhatsApp.')}
+  catch(e){if(!e||e.code!=='declined')toast('No se pudo generar el PDF ('+((e&&e.code)||'error')+').')}
+  btn.disabled=false}
+function printWeek(btn){return savePdf(btn,'Asignacion-semana-'+weekNo(weekStart)+'-'+weekStart+'.pdf',buildPdf)}
+function printSum(btn){return savePdf(btn,'Resumen-personal-semana-'+weekNo(weekStart)+'-'+weekStart+'.pdf',buildSumPdf)}
+
+/* ---------- carga inicial desde los Excel ---------- */
+async function runImport(){
+  const prog=document.getElementById('prog');const btn=document.getElementById('imp');btn.disabled=true;
+  const jobs=[];Object.entries(SEED.days).forEach(([k,v])=>jobs.push(['days/'+k,v]));Object.entries(SEED.weeks).forEach(([k,v])=>jobs.push(['weeks/'+k,v]));jobs.push(['cfg/main',SEED.cfg]);
+  prog.innerHTML=`<progress max="${jobs.length}" value="0"></progress><p id="pt">Guardando 0 de ${jobs.length}…</p>`;
+  for(let i=0;i<jobs.length;i++){
+    let tries=0;
+    while(true){try{await db.doc(jobs[i][0]).set(jobs[i][1]);break}catch(e){tries++;if(e&&e.code==='resource_exhausted'&&tries<6){await new Promise(r=>setTimeout(r,1200*tries));continue}
+      prog.innerHTML=`<p style="color:var(--bad)">No se pudo guardar (${esc(e&&e.code||'error')}). Vuelve a intentarlo.</p>`;btn.disabled=false;return}}
+    const pb=prog.querySelector('progress'),pt=prog.querySelector('#pt');if(pb)pb.value=i+1;if(pt)pt.textContent=`Guardando ${i+1} de ${jobs.length}…`;
+    await new Promise(r=>setTimeout(r,70))}}
+
+/* ---------- arranque ---------- */
+async function start(){
+  fetch('logo.png').then(r=>r.ok?r.blob():null).then(b=>b&&new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(b)})).then(u=>{if(u)LOGO=u}).catch(()=>{});
+  weekStart=weekStartOf(iso(new Date()));
+  const claude_=window.claude;let user=null;
+  try{db=claude_?await claude_.use('db'):null}catch(e){db=null}
+  try{user=claude_?await claude_.use('user'):null}catch(e){user=null}
+  if(user&&user.can){try{const c=user.can('data.write');if(c===false)canWrite=false}catch(e){}}
+  if(!db){cfgState='error';app.innerHTML='<div class="center"><h1>Inicia sesión</h1><p>Este tablero guarda sus datos compartidos y necesita que abras la sesión de Claude para usarlo.</p></div>';return}
+  const timer=setTimeout(()=>{if(cfgState==='loading'){cfgState='error';render()}},10000);
+  db.doc('cfg/main').onSnapshot(s=>{clearTimeout(timer);if(s.exists){cfg=clone(s.data());cfg.cx=cfg.cx||[];cfg.courses=cfg.courses||{};cfgState='ready';if((cfg.v||1)<4&&canWrite&&!s.metadata.hasPendingWrites){saveCfg(n=>{if((n.v||1)<2)migrate2(n);migrate4(n);n.v=4});return}}else{cfgState='empty'}softRender()},()=>{clearTimeout(timer);cfgState='error';render()});
+  db.collection('days').onSnapshot(s=>{daysDocs.clear();s.docs.forEach(d=>daysDocs.set(d.id,d.data()));softRender()},()=>{});
+  db.collection('weeks').onSnapshot(s=>{weeksDocs.clear();s.docs.forEach(d=>weeksDocs.set(d.id,d.data()));softRender()},()=>{});
+  db.collection('pend').onSnapshot(s=>{pendDocs.clear();s.docs.forEach(d=>pendDocs.set(d.id,d.data()));softRender()},()=>{});
+}
+boot();
+</script>
+</body>
+</html>
