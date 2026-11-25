@@ -76,6 +76,17 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
 .lab .ntx{font-size:13px;color:var(--ink)}
 .lab .cur{font-size:11.5px;color:var(--muted);font-weight:600}
 .lab.free{border-left-color:var(--ink)}
+.brk{flex-basis:100%;height:0;border-top:1px solid var(--line);margin:0 -16px}
+.cell[data-cont^="c:"]{cursor:pointer}
+.cell.pl{background:color-mix(in srgb,var(--ok) 15%,var(--bg))}
+.dtw{overflow:auto}
+.dt{border-collapse:collapse;width:100%;min-width:1100px;table-layout:fixed}
+.dt th,.dt td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+.dt th{background:var(--panel);font:600 13px var(--display);letter-spacing:.05em;text-transform:uppercase}
+.dt th:first-child,.dt td:first-child{width:180px}
+.dt td:first-child{font:700 15px/1.1 var(--display);text-transform:uppercase;background:var(--panel)}
+.dt textarea{width:100%;border:0;border-bottom:1px dotted var(--muted);background:transparent;color:var(--ink);font:13px/1.35 var(--body);resize:vertical;min-height:38px}
+.dt textarea:focus{outline:none;border-bottom:1px solid var(--accent)}
 .lab.mach{border-left-color:var(--mach)}
 .lab.veh{border-left-color:var(--veh)}
 .lab.sp{border-left-color:var(--muted)}
@@ -184,7 +195,7 @@ details summary{cursor:pointer;margin:6px 0}
   .bar{padding:8px 10px;gap:8px}
   .brand{font-size:18px}
   .logo{height:32px}
-  .tabs{flex-basis:100%;order:5}
+  .tabs{flex-basis:100%}
   .tab{padding:6px 9px;font-size:14px}
   .spacer{display:none}
   .weektitle{min-width:140px;font-size:17px}
@@ -294,7 +305,9 @@ SB.auth.onAuthStateChange((ev)=>{if(ev==='SIGNED_OUT')loginView()});
 const chain=new Map();
 function queue(path,fn,undo){const prev=chain.get(path)||Promise.resolve();const next=prev.then(fn).catch(e=>{try{if(undo)undo()}catch(x){}if(e&&e.code==='invalid_argument'){canWrite=false;toast('Este cambio no se guardó: tu cuenta no tiene permiso de edición en este tablero. Pide al dueño que te invite por correo como Editor.')}else toast('No se pudo guardar el cambio. Revisa tu conexión e inténtalo otra vez.');console.error(e);render()});chain.set(path,next);return next}
 function saveDay(d,obj){obj.d=d;cleanDay(obj);const old=daysDocs.get(d);daysDocs.set(d,obj);if(db)queue('days/'+d,()=>db.doc('days/'+d).set(obj),()=>{if(old)daysDocs.set(d,old);else daysDocs.delete(d)})}
-function saveWeek(s,obj){const old=weeksDocs.get(s);if(!obj.notes&&old&&old.notes)obj.notes=old.notes;weeksDocs.set(s,obj);if(db)queue('weeks/'+s,()=>db.doc('weeks/'+s).set(obj))}
+function saveWeek(s,obj){const old=weeksDocs.get(s);if(old)['notes','det','plan'].forEach(k=>{if(!obj[k]&&old[k])obj[k]=old[k]});weeksDocs.set(s,obj);if(db)queue('weeks/'+s,()=>db.doc('weeks/'+s).set(obj))}
+function weekDoc(){return clone(weeksDocs.get(weekStart)||{rows:rowsOf(weekStart),n:weekNo(weekStart)})}
+function togglePlan(pid,d){const w=weekDoc();w.plan=w.plan||{};const l=(w.plan[pid]||[]).slice();const i=l.indexOf(d);if(i>=0)l.splice(i,1);else l.push(d);if(l.length)w.plan[pid]=l;else delete w.plan[pid];saveWeek(weekStart,w);render()}
 function saveCfg(fn){const n=clone(cfg);fn(n);cfg=n;if(db)queue('cfg/main',()=>db.doc('cfg/main').set(n));render()}
 
 /* ---------- acciones sobre el tablero ---------- */
@@ -421,6 +434,11 @@ function schedulePend(id){
   savePend(id,{st:'prog',sw:ws});weekStart=ws;dayIdx=null;tab='board';render();
   toast(`${name} quedó en la semana ${weekNo(ws)}. Ahora asígnale gente.`)}
 function pfield(id,k,label,type,val,dis){return `<label>${label}<input type="${type}" ${type==='number'?'min="0" step="1" inputmode="numeric"':''} value="${esc(val==null?'':val)}" data-act="pf" data-id="${esc(id)}" data-k="${k}" ${dis} aria-label="${label}"></label>`}
+const DETF=[['a','Área (m²)'],['s','Sistema'],['d','Días a ejecutar'],['c','Contacto'],['h','Herramienta'],['m','Material'],['o','Otros']];
+function renderDet(){
+  const rows=rowsOf(weekStart).filter(pid=>project(pid));const det=(weeksDocs.get(weekStart)||{}).det||{};
+  if(!rows.length)return `<div class="page"><p class="empty">Esta semana no tiene proyectos. Agrégalos en el Tablero.</p></div>`;
+  return `<div class="page"><p style="margin:0 0 8px;color:var(--muted)">Escribe solo lo importante de cada proyecto para esta semana. Lo que dejes vacío no se muestra. No se imprime.</p><div class="dtw"><table class="dt"><thead><tr><th>Proyecto</th>${DETF.map(f=>`<th>${f[1]}</th>`).join('')}</tr></thead><tbody>${rows.map(pid=>{const x=det[pid]||{};return `<tr><td>${esc(project(pid).n)}</td>${DETF.map(([k,n])=>`<td>${canWrite?`<textarea data-act="det" data-pid="${esc(pid)}" data-k="${k}" maxlength="300" rows="2" aria-label="${n} de ${esc(project(pid).n)}">${esc(x[k]||'')}</textarea>`:esc(x[k]||'')}</td>`).join('')}</tr>`}).join('')}</tbody></table></div></div>`}
 function renderPend(){
   const dis=canWrite?'':'disabled';
   const all=[...pendDocs.entries()].map(([id,x])=>Object.assign({id},x));
@@ -462,10 +480,11 @@ function renderBoard(){
   dock+='</div>';
   let body='<div class="grid">';
   rows.forEach(pid=>{const pr=project(pid);if(!pr)return;const cl=cfg.clients.find(c=>c.id===pr.c);let tot=0;D.forEach(x=>{const c=x.cells[pid];if(c)tot+=(c.p||[]).length+(c.m||[]).length+(c.v||[]).length});
-    const nts=((weeksDocs.get(weekStart)||{}).notes||{})[pid]||['',''];
+    const nts=((weeksDocs.get(weekStart)||{}).notes||{})[pid]||['',''];const PL=(weeksDocs.get(weekStart)||{}).plan||{};
     body+=`<div class="lab"><b>${esc(pr.n)}</b>${cl&&cl.q?`<span class="cur" title="Pide curso ${esc(cl.n)}">🎓 Curso ${esc(cl.n)}</span>`:''}${[0,1].map(k=>canWrite?`<input class="nt" data-act="note" data-pid="${esc(pid)}" data-k="${k}" maxlength="45" placeholder="Trabajo a realizar…" value="${esc(nts[k]||'')}" aria-label="Nota ${k+1} de ${esc(pr.n)}">`:(nts[k]?`<span class="ntx">${esc(nts[k])}</span>`:'')).join('')}</div>`;
     days.forEach((d,i)=>{const c=D[i].cells[pid];const inf=(D[i].inf||[]).includes(pid);
-      body+=`<div class="cell ${inf?'inf':''}" data-day="${d}" data-cont="c:${esc(pid)}">${c?(c.v||[]).map(x=>chipV(x,d,'c:'+pid)).join('')+(c.m||[]).map(x=>chipM(x,d,'c:'+pid)).join('')+(c.p||[]).map(x=>chipP(x,d,'c:'+pid,ordNum(D[i],x,pid))).join(''):''}${c?`<button class="cp" data-act="copycell" data-day="${d}" data-pid="${esc(pid)}" title="Copiar al día siguiente">→</button>`:''}</div>`})});
+      const pl=(c&&((c.p||[]).length||(c.m||[]).length||(c.v||[]).length))||(PL[pid]||[]).includes(d);
+      body+=`<div class="cell ${inf?'inf':''} ${pl?'pl':''}" data-day="${d}" data-cont="c:${esc(pid)}">${c?(c.v||[]).map(x=>chipV(x,d,'c:'+pid)).join('')+(c.m||[]).map(x=>chipM(x,d,'c:'+pid)).join('')+(c.p||[]).map(x=>chipP(x,d,'c:'+pid,ordNum(D[i],x,pid))).join(''):''}${c?`<button class="cp" data-act="copycell" data-day="${d}" data-pid="${esc(pid)}" title="Copiar al día siguiente">→</button>`:''}</div>`})});
   SPECIAL.forEach(([k,name,sub])=>{body+=`<div class="lab sp"><b>${name}</b><span>${sub}</span></div>`;days.forEach((d,i)=>{body+=`<div class="cell spc" data-day="${d}" data-cont="${k}">${D[i][k].map(id=>chipP(id,d,k)).join('')}</div>`})});
   body+='</div>';
   const avail=cfg.projects.filter(p=>!rows.includes(p.id)&&!p.x);
@@ -473,7 +492,7 @@ function renderBoard(){
   return `${showAlerts?`<div class="alerts"><b>Revisión de la semana</b>${alerts.length?'<ul>'+alerts.map(a=>`<li style="color:${a.lvl==='bad'?'var(--bad)':'inherit'}">${esc(a.t)}</li>`).join('')+'</ul>':'<p style="margin:4px 0">Sin avisos.</p>'}</div>`:''}
   <div class="wrap" id="wrap"><div class="top">${top}</div>${body}<div class="dock ${pinned?'':'nofix'}">${dock}</div></div>
   <div class="addrow">${canWrite?`<b>Agregar o quitar proyecto:</b><select id="addsel" aria-label="Proyecto"><option value="">Elige un proyecto…</option>${cfg.projects.filter(p=>!p.x).slice().sort((a,b)=>a.n.localeCompare(b.n)).map(p=>`<option value="${esc(p.id)}">${rows.includes(p.id)?'✓ ':''}${esc(p.n)}</option>`).join('')}</select><button class="btn primary" data-act="addrow">Agregar</button><button class="btn danger" data-act="rmrow">Quitar</button><span style="color:var(--muted)">o crea uno:</span><input type="text" id="newproj" placeholder="Nombre del proyecto nuevo" aria-label="Proyecto nuevo"><button class="btn" data-act="newrow">Crear y agregar</button>`:''}${empty&&canWrite?`<button class="btn" data-act="copyprev">Copiar semana anterior</button><button class="btn" data-act="seedalm">Poner almacén (descansa domingo)</button>`:''}<span class="empty">Semana vacía: empieza copiando la anterior.</span>${bad?'':''}</div>
-  <div class="hint">Arrastra una ficha a otro proyecto o día. Con Shift al soltar: en otro día copia la ficha; en el mismo día la pone en un segundo trabajo (①, ②). Soltar en "Disponibles" (abajo) la libera. Las máquinas y camionetas se mueven igual.</div>`.replace(empty&&canWrite?'':'<span class="empty">Semana vacía: empieza copiando la anterior.</span>','')}
+  <div class="hint">Arrastra una ficha a otro proyecto o día. Con Shift al soltar: en otro día copia la ficha; en el mismo día la pone en un segundo trabajo (①, ②). Soltar en "Disponibles" (abajo) la libera. Pica un espacio vacío de una celda para marcar ese día como planeado (verde). Las máquinas y camionetas se mueven igual.</div>`.replace(empty&&canWrite?'':'<span class="empty">Semana vacía: empieza copiando la anterior.</span>','')}
 function renderCourses(){
   const cl=cfg.clients.filter(c=>showAllClients||c.q);const ppl=cfg.people.filter(p=>showInactive||p.a);
   const mx=`<div class="mx"><table><thead><tr><th>Persona</th>${cl.map(c=>`<th>${esc(c.n)}<label><input type="checkbox" data-act="req" data-id="${esc(c.id)}" ${c.q?'checked':''} ${canWrite?'':'disabled'}> pide curso</label>${c.q?`<label>vigencia <input type="number" class="vig" min="0" max="60" data-act="vig" data-id="${esc(c.id)}" value="${vigOf(c)}" ${canWrite?'':'disabled'} aria-label="Vigencia en meses de ${esc(c.n)}"> meses</label>`:''}</th>`).join('')}</tr></thead><tbody>${ppl.map(p=>`<tr><td><span class="chip p" style="--h:${p.h};cursor:default">${esc(p.n)}</span></td>${cl.map(c=>{const r=(cfg.courses[c.id]||{})[p.id];const st=!c.q&&!r?'':r?(r.ok?'ok':'no'):'unk';const lab=r?(r.ok?'Sí':'No'):'?';return `<td><button class="cs ${st||'unk'}" data-act="cs" data-p="${esc(p.id)}" data-c="${esc(c.id)}" ${canWrite?'':'disabled'} aria-label="${esc(p.n)} curso ${esc(c.n)}: ${lab}">${lab}${r&&r.f?`<small>${esc(r.f)}</small>`:''}</button></td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
@@ -517,12 +536,12 @@ function render(){
   if(cfgState==='error'){app.innerHTML='<div class="center"><h1>Sin conexión</h1><p>No se pudieron leer los datos compartidos. Revisa tu conexión y vuelve a abrir el tablero.</p></div>';return}
   const alerts=tab==='board'?weekAlerts():[];const bad=alerts.filter(a=>a.lvl==='bad').length;const ex=tab==='board'?expiring().filter(x=>x.left>=0):[];
   const head=`<div class="bar"><div class="brand"><img class="logo" src="logo.png" alt="Concrete Coatings Solutions"><span>Asignación<small>de personal</small></span></div>
-  <div class="tabs" role="tablist">${[['board','Tablero'],['pend','Pendientes'],['sum','Resumen'],['courses','Cursos'],['catalog','Catálogo'],['help','Cómo funciona']].map(([k,n])=>`<button class="tab" role="tab" data-act="tab" data-v="${k}" aria-selected="${tab===k}">${n}</button>`).join('')}</div>
-  ${(tab==='board'||tab==='sum')?`<div class="weeknav"><button class="btn" data-act="wk" data-v="-1" aria-label="Semana anterior">◀</button><div class="weektitle">Semana ${weekNo(weekStart)}<small>${rangeText(weekStart)}</small></div><button class="btn" data-act="wk" data-v="1" aria-label="Semana siguiente">▶</button><button class="btn" data-act="wk" data-v="0">Hoy</button></div>`:''}
+  <div class="tabs" role="tablist">${[['board','Tablero'],['det','Detalles'],['pend','Pendientes'],['sum','Resumen'],['courses','Cursos'],['catalog','Catálogo'],['help','Cómo funciona']].map(([k,n])=>`<button class="tab" role="tab" data-act="tab" data-v="${k}" aria-selected="${tab===k}">${n}</button>`).join('')}</div>
+  ${(tab==='board'||tab==='sum'||tab==='det')?`<div class="brk"></div><div class="weeknav"><button class="btn" data-act="wk" data-v="-1" aria-label="Semana anterior">◀</button><div class="weektitle">Semana ${weekNo(weekStart)}<small>${rangeText(weekStart)}</small></div><button class="btn" data-act="wk" data-v="1" aria-label="Semana siguiente">▶</button><button class="btn" data-act="wk" data-v="0">Hoy</button></div>`:''}
   <div class="spacer"></div>
   ${tab==='board'?`<div class="seg" role="group" aria-label="Vista"><button data-act="bv" data-v="week" aria-pressed="${boardView==='week'}">Semana</button><button data-act="bv" data-v="day" aria-pressed="${boardView==='day'}">Día</button></div>${ex.length?`<button class="pill ${ex.some(x=>x.lvl==='d15')?'bad':'warn'}" data-act="tab" data-v="courses">${ex.length} curso${ex.length===1?'':'s'} por vencer</button>`:''}<button class="pill ${bad?'bad':'ok'}" data-act="alerts">${bad?bad+' sin curso':alerts.length?alerts.length+' avisos':'Sin avisos'}</button>${boardView==='week'?`<label class="pill"><input type="checkbox" data-act="pin" ${pinned?'checked':''}> Disponibles fijos</label>`:''}<button class="btn" data-act="print">Imprimir</button>${canWrite?`<button class="btn" data-act="copyprev">Copiar semana anterior</button>`:''}`:tab==='sum'?`<button class="btn primary" data-act="printsum">Imprimir PDF</button><button class="btn" data-act="copysum">Copiar texto</button>`:''}</div>
   ${canWrite?'':'<div class="banner">Modo lectura: puedes ver todo el tablero, pero solo los editores pueden mover fichas y guardar cambios.</div>'}`;
-  app.innerHTML=head+'<main>'+(tab==='board'?renderBoard():tab==='pend'?renderPend():tab==='sum'?renderSum():tab==='courses'?renderCourses():tab==='help'?renderHelp():renderCatalog())+'</main>';
+  app.innerHTML=head+'<main>'+(tab==='board'?renderBoard():tab==='det'?renderDet():tab==='pend'?renderPend():tab==='sum'?renderSum():tab==='courses'?renderCourses():tab==='help'?renderHelp():renderCatalog())+'</main>';
   const w=document.getElementById('wrap');if(w){w.scrollLeft=sl;w.scrollTop=st}}
 
 /* ---------- arrastre con puntero (ratón y tacto) ---------- */
@@ -559,6 +578,7 @@ window.addEventListener('keydown',e=>{if(e.key==='Escape'&&drag)endDrag(false)})
 
 /* ---------- eventos de la interfaz ---------- */
 app.addEventListener('click',async e=>{
+  const ce=e.target;if(canWrite&&ce.classList&&ce.classList.contains('cell')&&(ce.dataset.cont||'').startsWith('c:')&&!ce.querySelector('.chip')){togglePlan(ce.dataset.cont.slice(2),ce.dataset.day);return}
   const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
   if(['pname','pact','palm','prname','prcl','mname','mfrom','vname','link','req','vact','vig','pf'].includes(a))return;
   if(a==='tab'){tab=b.dataset.v;render()}
@@ -611,6 +631,7 @@ app.addEventListener('change',e=>{
   else if(a==='vname')saveCfg(n=>{if(v.trim())n.vehicles.find(p=>p.id===id).n=v.trim()});
   else if(a==='vact')saveCfg(n=>{const x=n.vehicles.find(p=>p.id===id);if(v)delete x.x;else x.x=1});
   else if(a==='vig')saveCfg(n=>{const c=n.clients.find(k=>k.id===id);const q=parseInt(v,10);c.vig=isNaN(q)?12:Math.max(0,Math.min(60,q))});
+  else if(a==='det'){const w=weekDoc();w.det=w.det||{};const pid=b.dataset.pid;const x=Object.assign({},w.det[pid]||{});const t=v.trim();if(t)x[b.dataset.k]=t;else delete x[b.dataset.k];if(Object.keys(x).length)w.det[pid]=x;else delete w.det[pid];saveWeek(weekStart,w)}
   else if(a==='note'){const w=clone(weeksDocs.get(weekStart)||{rows:rowsOf(weekStart),n:weekNo(weekStart)});w.notes=w.notes||{};const pid=b.dataset.pid;const l=(w.notes[pid]||['','']).slice();l[+b.dataset.k]=v.trim();if(l.some(Boolean))w.notes[pid]=l;else delete w.notes[pid];saveWeek(weekStart,w)}
   else if(a==='pf'){const k=b.dataset.k;savePend(id,{[k]:(k==='n'||k==='cl')?v.trim().toUpperCase():v.trim()})}
   else if(a==='link'){const i=+b.dataset.i;saveCfg(n=>{const x=n.cx[i];const prev=x.link;x.link=v;
