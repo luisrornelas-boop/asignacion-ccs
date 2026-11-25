@@ -56,7 +56,7 @@ button,input,select{font:inherit;color:inherit}
 .banner{padding:8px 16px;background:var(--warnbg);border-bottom:1px solid var(--line);font-weight:500}
 main{flex:1;min-height:0;display:flex;flex-direction:column}
 .wrap{flex:1;min-height:0;overflow:auto;position:relative}
-.grid{display:grid;grid-template-columns:148px repeat(7,minmax(168px,1fr));min-width:1330px}
+.grid{display:grid;grid-template-columns:repeat(8,minmax(160px,1fr));min-width:1280px}
 .top{position:sticky;top:0;z-index:5;background:var(--bg)}
 .dock{position:sticky;bottom:0;z-index:6;background:var(--bg);box-shadow:0 -3px 0 var(--ink)}
 .dock.nofix{position:static}
@@ -71,6 +71,10 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
 .lab b{font:700 17px/1.05 var(--display);letter-spacing:.03em;text-transform:uppercase}
 .lab span{font-size:11.5px;color:var(--muted)}
 .lab .x{align-self:flex-start;border:0;background:none;color:var(--muted);cursor:pointer;padding:0;font-size:12px;text-decoration:underline}
+.lab .nt{width:100%;border:0;border-bottom:1px dotted var(--muted);background:transparent;color:var(--ink);font:13px/1.3 var(--body);padding:2px 0;margin-top:2px}
+.lab .nt:focus{outline:none;border-bottom:1px solid var(--accent)}
+.lab .ntx{font-size:13px;color:var(--ink)}
+.lab .cur{font-size:11.5px;color:var(--muted);font-weight:600}
 .lab.free{border-left-color:var(--ink)}
 .lab.mach{border-left-color:var(--mach)}
 .lab.veh{border-left-color:var(--veh)}
@@ -281,6 +285,7 @@ function loginView(msg){
     lm.textContent=r.error?(/rate limit/i.test(r.error.message||'')?'Se mandaron demasiados enlaces en la última hora. Espera un rato y vuelve a intentar.':'No se pudo enviar: '+r.error.message):'Listo. Revisa tu correo y abre el enlace (puede tardar un minuto; mira también en spam).'}}
 async function boot(){
   const {data}=await SB.auth.getSession();
+  if(/access_token|error_description|[?&]code=/.test(location.hash+location.search))history.replaceState(null,'',location.pathname);
   if(!data.session){loginView();return}
   SB_EMAIL=data.session.user.email||'';
   start()}
@@ -289,7 +294,7 @@ SB.auth.onAuthStateChange((ev)=>{if(ev==='SIGNED_OUT')loginView()});
 const chain=new Map();
 function queue(path,fn,undo){const prev=chain.get(path)||Promise.resolve();const next=prev.then(fn).catch(e=>{try{if(undo)undo()}catch(x){}if(e&&e.code==='invalid_argument'){canWrite=false;toast('Este cambio no se guardó: tu cuenta no tiene permiso de edición en este tablero. Pide al dueño que te invite por correo como Editor.')}else toast('No se pudo guardar el cambio. Revisa tu conexión e inténtalo otra vez.');console.error(e);render()});chain.set(path,next);return next}
 function saveDay(d,obj){obj.d=d;cleanDay(obj);const old=daysDocs.get(d);daysDocs.set(d,obj);if(db)queue('days/'+d,()=>db.doc('days/'+d).set(obj),()=>{if(old)daysDocs.set(d,old);else daysDocs.delete(d)})}
-function saveWeek(s,obj){weeksDocs.set(s,obj);if(db)queue('weeks/'+s,()=>db.doc('weeks/'+s).set(obj))}
+function saveWeek(s,obj){const old=weeksDocs.get(s);if(!obj.notes&&old&&old.notes)obj.notes=old.notes;weeksDocs.set(s,obj);if(db)queue('weeks/'+s,()=>db.doc('weeks/'+s).set(obj))}
 function saveCfg(fn){const n=clone(cfg);fn(n);cfg=n;if(db)queue('cfg/main',()=>db.doc('cfg/main').set(n));render()}
 
 /* ---------- acciones sobre el tablero ---------- */
@@ -457,7 +462,8 @@ function renderBoard(){
   dock+='</div>';
   let body='<div class="grid">';
   rows.forEach(pid=>{const pr=project(pid);if(!pr)return;const cl=cfg.clients.find(c=>c.id===pr.c);let tot=0;D.forEach(x=>{const c=x.cells[pid];if(c)tot+=(c.p||[]).length+(c.m||[]).length+(c.v||[]).length});
-    body+=`<div class="lab"><b>${esc(pr.n)}</b><span>${cl&&cl.q?'Pide curso '+esc(cl.n):'Sin curso requerido'}</span>${canWrite?`<button class="x" data-act="delrow" data-pid="${esc(pid)}">quitar</button>`:''}</div>`;
+    const nts=((weeksDocs.get(weekStart)||{}).notes||{})[pid]||['',''];
+    body+=`<div class="lab"><b>${esc(pr.n)}</b>${cl&&cl.q?`<span class="cur" title="Pide curso ${esc(cl.n)}">🎓 Curso ${esc(cl.n)}</span>`:''}${[0,1].map(k=>canWrite?`<input class="nt" data-act="note" data-pid="${esc(pid)}" data-k="${k}" maxlength="45" placeholder="Trabajo a realizar…" value="${esc(nts[k]||'')}" aria-label="Nota ${k+1} de ${esc(pr.n)}">`:(nts[k]?`<span class="ntx">${esc(nts[k])}</span>`:'')).join('')}</div>`;
     days.forEach((d,i)=>{const c=D[i].cells[pid];const inf=(D[i].inf||[]).includes(pid);
       body+=`<div class="cell ${inf?'inf':''}" data-day="${d}" data-cont="c:${esc(pid)}">${c?(c.v||[]).map(x=>chipV(x,d,'c:'+pid)).join('')+(c.m||[]).map(x=>chipM(x,d,'c:'+pid)).join('')+(c.p||[]).map(x=>chipP(x,d,'c:'+pid,ordNum(D[i],x,pid))).join(''):''}${c?`<button class="cp" data-act="copycell" data-day="${d}" data-pid="${esc(pid)}" title="Copiar al día siguiente">→</button>`:''}</div>`})});
   SPECIAL.forEach(([k,name,sub])=>{body+=`<div class="lab sp"><b>${name}</b><span>${sub}</span></div>`;days.forEach((d,i)=>{body+=`<div class="cell spc" data-day="${d}" data-cont="${k}">${D[i][k].map(id=>chipP(id,d,k)).join('')}</div>`})});
@@ -605,6 +611,7 @@ app.addEventListener('change',e=>{
   else if(a==='vname')saveCfg(n=>{if(v.trim())n.vehicles.find(p=>p.id===id).n=v.trim()});
   else if(a==='vact')saveCfg(n=>{const x=n.vehicles.find(p=>p.id===id);if(v)delete x.x;else x.x=1});
   else if(a==='vig')saveCfg(n=>{const c=n.clients.find(k=>k.id===id);const q=parseInt(v,10);c.vig=isNaN(q)?12:Math.max(0,Math.min(60,q))});
+  else if(a==='note'){const w=clone(weeksDocs.get(weekStart)||{rows:rowsOf(weekStart),n:weekNo(weekStart)});w.notes=w.notes||{};const pid=b.dataset.pid;const l=(w.notes[pid]||['','']).slice();l[+b.dataset.k]=v.trim();if(l.some(Boolean))w.notes[pid]=l;else delete w.notes[pid];saveWeek(weekStart,w)}
   else if(a==='pf'){const k=b.dataset.k;savePend(id,{[k]:(k==='n'||k==='cl')?v.trim().toUpperCase():v.trim()})}
   else if(a==='link'){const i=+b.dataset.i;saveCfg(n=>{const x=n.cx[i];const prev=x.link;x.link=v;
     if(prev){Object.keys(n.courses).forEach(c=>{if(n.courses[c][prev]&&n.courses[c][prev].src===i)delete n.courses[c][prev]})}
@@ -621,14 +628,15 @@ function buildPdf(){
   const nm=(list,arr)=>arr.map(id=>(list.find(x=>x.id===id)||{n:''}).n).filter(Boolean);
   const head=[['PROYECTO'].concat(days.map(d=>DOW[pdate(d).getDay()]+' '+pdate(d).getDate()))];
   const body=[];
+  const NT=(weeksDocs.get(weekStart)||{}).notes||{};
   rowsOf(weekStart).forEach(pid=>{const pr=project(pid);if(!pr)return;let any=false;
     const cells=D.map(x=>{const c=x.cells[pid];if(!c)return '';any=true;const eq=nm(cfg.machines,c.m||[]).concat(nm(cfg.vehicles,c.v||[]));return (eq.length?'['+eq.join(', ')+']\n':'')+(c.p||[]).map(id=>{const p=person(id);if(!p)return '';const k=ordNum(x,id,pid);return p.n+(k?' ('+k+'°)':'')}).filter(Boolean).join('\n')});
-    if(any)body.push([pr.n].concat(cells))});
+    if(any)body.push([[pr.n].concat((NT[pid]||[]).filter(Boolean)).join(String.fromCharCode(10))].concat(cells))});
   const nProj=body.length;
   SPECIAL.forEach(([k,name])=>{if(D.some(x=>x[k].length))body.push([name.toUpperCase()].concat(D.map(x=>nm(cfg.people,x[k]).join('\n'))))});
   const free=D.map(x=>cfg.people.filter(p=>p.a&&!placed(x,'p',p.id)).map(p=>p.n).join('\n'));
   if(free.some(Boolean))body.push(['SIN ASIGNAR'].concat(free));
-  const first=30,cw=(W-20-first)/7;const cs={0:{cellWidth:first,fontStyle:'bold',fillColor:[236,234,226]}};for(let i=1;i<=7;i++)cs[i]={cellWidth:cw};
+  const cw=(W-20)/8,first=cw;const cs={0:{cellWidth:first,fontStyle:'bold',fillColor:[236,234,226]}};for(let i=1;i<=7;i++)cs[i]={cellWidth:cw};
   doc.autoTable({head,body,startY:23,margin:{left:10,right:10,bottom:10},theme:'grid',
     styles:{font:'helvetica',fontSize:10,cellPadding:1.6,textColor:20,lineColor:[120,120,120],lineWidth:0.2,valign:'top',overflow:'linebreak'},
     headStyles:{fillColor:[0,165,223],textColor:255,fontStyle:'bold',halign:'center',fontSize:11},columnStyles:cs,rowPageBreak:'avoid',
